@@ -1,4 +1,5 @@
 add_library(gbemu_core
+  apu.cpp
   cpu.cpp
   core.cpp
   mmu.cpp

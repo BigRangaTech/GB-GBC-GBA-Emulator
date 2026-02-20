@@ -9,6 +9,7 @@ namespace gbemu::common {
 class Config {
  public:
   bool load_file(const std::string& path, std::string* error);
+  const std::unordered_map<std::string, std::string>& values() const;
 
   bool has(const std::string& key) const;
   std::string get_string(const std::string& key, const std::string& default_value) const;

@@ -71,6 +71,10 @@ bool Config::has(const std::string& key) const {
   return values_.find(normalize_key(key)) != values_.end();
 }
 
+const std::unordered_map<std::string, std::string>& Config::values() const {
+  return values_;
+}
+
 std::string Config::get_string(const std::string& key, const std::string& default_value) const {
   auto it = values_.find(normalize_key(key));
   if (it == values_.end()) {

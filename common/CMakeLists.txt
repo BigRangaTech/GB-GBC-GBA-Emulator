@@ -1,6 +1,7 @@
 add_library(gbemu_common
   common.cpp
   config.cpp
+  input.cpp
   rom.cpp
 )
 

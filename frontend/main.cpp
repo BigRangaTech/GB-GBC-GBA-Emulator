@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
@@ -6,15 +9,119 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <SDL2/SDL.h>
 
 #include "core.h"
 #include "config.h"
+#include "input.h"
 #include "rom.h"
 
 namespace {
+
+struct Glyph {
+  std::array<std::uint8_t, 7> rows{};
+};
+
+const Glyph& glyph_for(char c) {
+  static const Glyph empty{{0, 0, 0, 0, 0, 0, 0}};
+  static const std::unordered_map<char, Glyph> font = {
+      {'A', {{0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}}},
+      {'B', {{0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}}},
+      {'C', {{0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}}},
+      {'D', {{0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}}},
+      {'E', {{0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}}},
+      {'F', {{0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}}},
+      {'G', {{0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E}}},
+      {'H', {{0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}}},
+      {'I', {{0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}}},
+      {'J', {{0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0C}}},
+      {'K', {{0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}}},
+      {'L', {{0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}}},
+      {'M', {{0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}}},
+      {'N', {{0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11}}},
+      {'O', {{0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}}},
+      {'P', {{0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}}},
+      {'Q', {{0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}}},
+      {'R', {{0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}}},
+      {'S', {{0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}}},
+      {'T', {{0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}}},
+      {'U', {{0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}}},
+      {'V', {{0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}}},
+      {'W', {{0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}}},
+      {'X', {{0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}}},
+      {'Y', {{0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}}},
+      {'Z', {{0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}}},
+      {'0', {{0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}}},
+      {'1', {{0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}}},
+      {'2', {{0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}}},
+      {'3', {{0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E}}},
+      {'4', {{0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}}},
+      {'5', {{0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}}},
+      {'6', {{0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}}},
+      {'7', {{0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}}},
+      {'8', {{0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}}},
+      {'9', {{0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}}},
+      {':', {{0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00}}},
+      {'-', {{0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}}},
+      {'/', {{0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00}}},
+      {'+', {{0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00}}},
+      {'?', {{0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04}}},
+      {' ', {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}}},
+  };
+
+  auto it = font.find(c);
+  if (it != font.end()) {
+    return it->second;
+  }
+  return empty;
+}
+
+std::string upper_ascii(const std::string& input) {
+  std::string out = input;
+  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+    return static_cast<char>(std::toupper(c));
+  });
+  return out;
+}
+
+std::string key_label(int keycode) {
+  const char* name = SDL_GetKeyName(static_cast<SDL_Keycode>(keycode));
+  if (!name || !*name) {
+    return "?";
+  }
+  return upper_ascii(name);
+}
+
+void draw_text(SDL_Renderer* renderer, int x, int y, int scale, const std::string& text,
+               SDL_Color color) {
+  if (!renderer) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  int cursor_x = x;
+  int cursor_y = y;
+  for (char ch : text) {
+    if (ch == '\n') {
+      cursor_x = x;
+      cursor_y += 8 * scale;
+      continue;
+    }
+    Glyph glyph = glyph_for(ch);
+    for (int row = 0; row < 7; ++row) {
+      std::uint8_t bits = glyph.rows[row];
+      for (int col = 0; col < 5; ++col) {
+        if (bits & (1u << (4 - col))) {
+          SDL_Rect r{cursor_x + col * scale, cursor_y + row * scale, scale, scale};
+          SDL_RenderFillRect(renderer, &r);
+        }
+      }
+    }
+    cursor_x += 6 * scale;
+  }
+}
 
 std::string to_ascii_title(const std::vector<std::uint8_t>& data, std::size_t offset, std::size_t len) {
   if (data.size() < offset + len) {
@@ -71,6 +178,17 @@ std::string to_lower(std::string_view value) {
   return out;
 }
 
+std::optional<bool> parse_bool(std::string_view value) {
+  std::string lower = to_lower(value);
+  if (lower == "1" || lower == "true" || lower == "yes" || lower == "on") {
+    return true;
+  }
+  if (lower == "0" || lower == "false" || lower == "no" || lower == "off") {
+    return false;
+  }
+  return std::nullopt;
+}
+
 std::optional<gbemu::core::System> parse_system(std::string_view value) {
   std::string lower = to_lower(value);
   if (lower == "gb" || lower == "dmg") {
@@ -101,6 +219,13 @@ struct Options {
   std::optional<double> fps_override;
   std::optional<int> scale_override;
   std::optional<std::string> video_driver;
+  bool cpu_trace = false;
+  bool boot_trace = false;
+  bool headless = false;
+  int headless_frames = 120;
+  bool debug_window_overlay = false;
+  bool cgb_color_correction = false;
+  bool show_help_overlay = false;
   bool show_help = false;
 };
 
@@ -116,6 +241,13 @@ void print_usage(const char* exe) {
   std::cout << "  --boot-rom-gb <path>   Boot ROM path for GB\n";
   std::cout << "  --boot-rom-gbc <path>  Boot ROM path for GBC\n";
   std::cout << "  --boot-rom-gba <path>  Boot ROM path for GBA\n";
+  std::cout << "  --cpu-trace            Enable CPU trace buffer on faults\n";
+  std::cout << "  --boot-trace           Log when boot ROM is disabled\n";
+  std::cout << "  --headless             Run without SDL window\n";
+  std::cout << "  --frames <count>       Frames to run in headless mode (default: 120)\n";
+  std::cout << "  --debug-window         Draw window border overlay\n";
+  std::cout << "  --cgb-color-correct    Apply simple CGB color correction\n";
+  std::cout << "  --help-overlay         Toggle help overlay at start\n";
   std::cout << "  -h, --help             Show this help text\n";
 }
 
@@ -160,6 +292,70 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
   std::string driver = config.get_string("video_driver", "");
   if (!driver.empty()) {
     options->video_driver = driver;
+  }
+
+  std::string trace_value = config.get_string("cpu_trace", "");
+  if (!trace_value.empty()) {
+    auto parsed = parse_bool(trace_value);
+    if (parsed.has_value()) {
+      options->cpu_trace = *parsed;
+    } else {
+      std::cout << "Config warning: invalid cpu_trace value '" << trace_value << "'\n";
+    }
+  }
+
+  std::string boot_trace_value = config.get_string("boot_trace", "");
+  if (!boot_trace_value.empty()) {
+    auto parsed = parse_bool(boot_trace_value);
+    if (parsed.has_value()) {
+      options->boot_trace = *parsed;
+    } else {
+      std::cout << "Config warning: invalid boot_trace value '" << boot_trace_value << "'\n";
+    }
+  }
+
+  std::string headless_value = config.get_string("headless", "");
+  if (!headless_value.empty()) {
+    auto parsed = parse_bool(headless_value);
+    if (parsed.has_value()) {
+      options->headless = *parsed;
+    } else {
+      std::cout << "Config warning: invalid headless value '" << headless_value << "'\n";
+    }
+  }
+
+  if (auto frames = config.get_int("headless_frames")) {
+    options->headless_frames = *frames;
+  }
+
+  std::string debug_window_value = config.get_string("debug_window_overlay", "");
+  if (!debug_window_value.empty()) {
+    auto parsed = parse_bool(debug_window_value);
+    if (parsed.has_value()) {
+      options->debug_window_overlay = *parsed;
+    } else {
+      std::cout << "Config warning: invalid debug_window_overlay value '" << debug_window_value << "'\n";
+    }
+  }
+
+  std::string cgb_color_value = config.get_string("cgb_color_correction", "");
+  if (!cgb_color_value.empty()) {
+    auto parsed = parse_bool(cgb_color_value);
+    if (parsed.has_value()) {
+      options->cgb_color_correction = *parsed;
+    } else {
+      std::cout << "Config warning: invalid cgb_color_correction value '" << cgb_color_value << "'\n";
+    }
+  }
+
+  std::string help_value = config.get_string("show_help_overlay", "");
+  if (!help_value.empty()) {
+    auto parsed = parse_bool(help_value);
+    if (parsed.has_value()) {
+      options->show_help_overlay = *parsed;
+    } else {
+      std::cout << "Config warning: invalid show_help_overlay value '" << help_value << "'\n";
+    }
   }
 
   std::string boot_rom = config.get_string("boot_rom", "");
@@ -212,6 +408,49 @@ std::string system_name(gbemu::core::System system) {
     default:
       return "GB";
   }
+}
+
+std::vector<std::string> boot_rom_extensions(gbemu::core::System system) {
+  if (system == gbemu::core::System::GBA) {
+    return {".bin"};
+  }
+  if (system == gbemu::core::System::GBC) {
+    return {".gbc", ".bin"};
+  }
+  return {".gb", ".bin"};
+}
+
+bool has_extension(const std::filesystem::path& path, const std::vector<std::string>& exts) {
+  std::string ext = to_lower(path.extension().string());
+  for (const auto& allowed : exts) {
+    if (ext == allowed) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::optional<std::string> find_boot_rom_in_dir(const std::filesystem::path& dir,
+                                                gbemu::core::System system) {
+  if (!std::filesystem::exists(dir)) {
+    return std::nullopt;
+  }
+  std::vector<std::filesystem::path> candidates;
+  auto exts = boot_rom_extensions(system);
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    if (!has_extension(entry.path(), exts)) {
+      continue;
+    }
+    candidates.push_back(entry.path());
+  }
+  if (candidates.empty()) {
+    return std::nullopt;
+  }
+  std::sort(candidates.begin(), candidates.end());
+  return candidates.front().string();
 }
 
 bool read_boot_rom(const std::string& path,
@@ -276,9 +515,16 @@ bool load_boot_rom(gbemu::core::System system,
     return read_boot_rom(options.boot_rom_gba, out, error);
   }
 
+  std::filesystem::path firmware_root("firmware");
+  std::filesystem::path system_dir = firmware_root / system_name(system);
+  if (auto found = find_boot_rom_in_dir(system_dir, system)) {
+    return read_boot_rom(*found, out, error);
+  }
+
   std::vector<std::string> candidates;
   if (system == gbemu::core::System::GB) {
     candidates = {
+        "firmware/GB/Game-Boy-Boot-ROM.gb",
         "firmware/dmg_boot.bin",
         "firmware/gb_boot.bin",
         "firmware/boot.gb",
@@ -287,6 +533,7 @@ bool load_boot_rom(gbemu::core::System system,
     };
   } else if (system == gbemu::core::System::GBC) {
     candidates = {
+        "firmware/GBC/Game-Boy-Color-Boot-ROM.gbc",
         "firmware/cgb_boot.bin",
         "firmware/gbc_boot.bin",
         "firmware/boot.gbc",
@@ -295,6 +542,7 @@ bool load_boot_rom(gbemu::core::System system,
     };
   } else {
     candidates = {
+        "firmware/GBA/Game-Boy-Advance-Boot-ROM.bin",
         "firmware/gba_bios.bin",
         "firmware/gba_boot.bin",
         "firmware/bios.bin",
@@ -507,6 +755,29 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.boot_rom_gba = argv[++i];
+    } else if (arg == "--cpu-trace") {
+      options.cpu_trace = true;
+    } else if (arg == "--boot-trace") {
+      options.boot_trace = true;
+    } else if (arg == "--headless") {
+      options.headless = true;
+    } else if (arg == "--frames") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --frames\n";
+        return 1;
+      }
+      try {
+        options.headless_frames = std::stoi(argv[++i]);
+      } catch (...) {
+        std::cout << "Invalid frames value\n";
+        return 1;
+      }
+    } else if (arg == "--debug-window") {
+      options.debug_window_overlay = true;
+    } else if (arg == "--cgb-color-correct") {
+      options.cgb_color_correction = true;
+    } else if (arg == "--help-overlay") {
+      options.show_help_overlay = true;
     }
   }
 
@@ -555,6 +826,29 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.boot_rom_gba = argv[++i];
+    } else if (arg == "--cpu-trace") {
+      options.cpu_trace = true;
+    } else if (arg == "--boot-trace") {
+      options.boot_trace = true;
+    } else if (arg == "--headless") {
+      options.headless = true;
+    } else if (arg == "--frames") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --frames\n";
+        return 1;
+      }
+      try {
+        options.headless_frames = std::stoi(argv[++i]);
+      } catch (...) {
+        std::cout << "Invalid frames value\n";
+        return 1;
+      }
+    } else if (arg == "--debug-window") {
+      options.debug_window_overlay = true;
+    } else if (arg == "--cgb-color-correct") {
+      options.cgb_color_correction = true;
+    } else if (arg == "--help-overlay") {
+      options.show_help_overlay = true;
     } else if (arg == "--system") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --system\n";
@@ -628,6 +922,11 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (options.headless_frames <= 0) {
+    std::cout << "Frames must be > 0\n";
+    return 1;
+  }
+
   std::string path = options.rom_path;
   std::vector<std::uint8_t> rom;
   std::string error;
@@ -655,6 +954,96 @@ int main(int argc, char** argv) {
     std::cout << "Failed to load ROM into core: " << load_error << "\n";
     return 1;
   }
+  core.set_cpu_trace_enabled(options.cpu_trace);
+  core.set_debug_window_overlay(options.debug_window_overlay);
+  core.set_cgb_color_correction(options.cgb_color_correction);
+  core.set_joypad_state(0xFF);
+
+  bool boot_rom_last = core.boot_rom_enabled();
+  auto log_boot_state = [&](long long frame) {
+    if (!options.boot_trace) {
+      return;
+    }
+    bool now = core.boot_rom_enabled();
+    if (boot_rom_last && !now) {
+      std::cout << "Boot ROM disabled at frame " << frame
+                << " PC=0x" << std::hex << std::setw(4) << std::setfill('0')
+                << core.cpu_pc() << " opcode=0x" << std::setw(2)
+                << static_cast<int>(core.cpu_opcode()) << std::dec << "\n";
+    } else if (now && (frame % 120 == 0)) {
+      std::cout << "Boot ROM still enabled at frame " << frame
+                << " PC=0x" << std::hex << std::setw(4) << std::setfill('0')
+                << core.cpu_pc() << " opcode=0x" << std::setw(2)
+                << static_cast<int>(core.cpu_opcode()) << std::dec << "\n";
+    }
+    boot_rom_last = now;
+  };
+
+  if (options.boot_trace) {
+    std::cout << "Boot ROM enabled: " << (boot_rom_last ? "yes" : "no") << "\n";
+  }
+
+  gbemu::common::InputConfig input_config;
+  input_config.set_default();
+  if (!config_path.empty()) {
+    gbemu::common::Config config_for_inputs;
+    std::string err;
+    config_for_inputs.load_file(config_path, &err);
+    input_config.load_from_config(config_for_inputs.values());
+  }
+
+  std::filesystem::path save_dir("saves");
+  std::error_code save_ec;
+  std::filesystem::create_directories(save_dir, save_ec);
+  std::filesystem::path rom_path = std::filesystem::path(path).filename();
+  std::filesystem::path save_base = save_dir / rom_path.stem();
+  std::filesystem::path save_path = save_base;
+  save_path += ".sav";
+  std::filesystem::path rtc_path = save_base;
+  rtc_path += ".rtc";
+  std::filesystem::path state_path = save_base;
+  state_path += ".state";
+
+  if (core.has_battery() && core.has_ram() && std::filesystem::exists(save_path)) {
+    std::vector<std::uint8_t> save_data;
+    std::string save_error;
+    if (gbemu::common::read_file(save_path.string(), &save_data, &save_error)) {
+      core.load_ram_data(save_data);
+      std::cout << "Loaded save RAM: " << save_path.string() << "\n";
+    } else {
+      std::cout << "Failed to read save RAM: " << save_error << "\n";
+    }
+  }
+
+  if (core.has_rtc() && std::filesystem::exists(rtc_path)) {
+    std::vector<std::uint8_t> rtc_data;
+    std::string rtc_error;
+    if (gbemu::common::read_file(rtc_path.string(), &rtc_data, &rtc_error)) {
+      core.load_rtc_data(rtc_data);
+      std::cout << "Loaded RTC data: " << rtc_path.string() << "\n";
+    } else {
+      std::cout << "Failed to read RTC data: " << rtc_error << "\n";
+    }
+  }
+
+  auto dump_cpu_fault = [&core]() {
+    std::cout << "CPU fault at PC=0x" << std::hex << std::setw(4) << std::setfill('0')
+              << core.cpu_pc() << " opcode=0x" << std::setw(2)
+              << static_cast<int>(core.cpu_opcode()) << std::dec << "\n";
+    std::cout << "Reason: " << core.cpu_fault_reason() << "\n";
+    auto trace = core.cpu_trace();
+    if (!trace.empty()) {
+      std::cout << "CPU trace (oldest -> newest):\n";
+      for (const auto& entry : trace) {
+        std::cout << "  PC=0x" << std::hex << std::setw(4) << std::setfill('0') << entry.pc
+                  << " OP=0x" << std::setw(2) << static_cast<int>(entry.opcode);
+        if (entry.opcode == 0xCB) {
+          std::cout << " CB=0x" << std::setw(2) << static_cast<int>(entry.cb_opcode);
+        }
+        std::cout << std::dec << "\n";
+      }
+    }
+  };
 
   if (system == gbemu::core::System::GBA) {
     print_gba_header(rom);
@@ -662,6 +1051,77 @@ int main(int argc, char** argv) {
     print_gb_header(rom);
   } else {
     std::cout << "Unknown or too-small ROM.\n";
+  }
+
+  auto save_state = [&]() {
+    if (core.has_battery() && core.has_ram()) {
+      std::vector<std::uint8_t> data = core.ram_data();
+      std::string save_error;
+      if (gbemu::common::write_file(save_path.string(), data, &save_error)) {
+        std::cout << "Saved RAM to " << save_path.string() << "\n";
+      } else {
+        std::cout << "Failed to save RAM: " << save_error << "\n";
+      }
+    }
+    if (core.has_rtc()) {
+      std::vector<std::uint8_t> data = core.rtc_data();
+      std::string save_error;
+      if (gbemu::common::write_file(rtc_path.string(), data, &save_error)) {
+        std::cout << "Saved RTC to " << rtc_path.string() << "\n";
+      } else {
+        std::cout << "Failed to save RTC: " << save_error << "\n";
+      }
+    }
+  };
+
+  auto save_full_state = [&]() {
+    std::vector<std::uint8_t> state;
+    if (!core.save_state(&state)) {
+      std::cout << "Failed to build save state\n";
+      return;
+    }
+    std::string save_error;
+    if (gbemu::common::write_file(state_path.string(), state, &save_error)) {
+      std::cout << "Saved state to " << state_path.string() << "\n";
+    } else {
+      std::cout << "Failed to save state: " << save_error << "\n";
+    }
+  };
+
+  auto load_full_state = [&]() {
+    std::vector<std::uint8_t> state;
+    std::string load_error;
+    if (!gbemu::common::read_file(state_path.string(), &state, &load_error)) {
+      std::cout << "Failed to read state: " << load_error << "\n";
+      return;
+    }
+    std::string err;
+    if (!core.load_state(state, &err)) {
+      std::cout << "Failed to load state: " << err << "\n";
+      return;
+    }
+    std::cout << "Loaded state from " << state_path.string() << "\n";
+  };
+
+  if (options.headless) {
+    for (int frame = 0; frame < options.headless_frames; ++frame) {
+      if (core.cpu_faulted()) {
+        dump_cpu_fault();
+        save_state();
+        return 1;
+      }
+      core.step_frame();
+      log_boot_state(frame);
+    }
+    if (core.cpu_faulted()) {
+      dump_cpu_fault();
+      save_state();
+      return 1;
+    }
+    std::cout << "Headless run completed " << options.headless_frames
+              << " frame(s) without CPU fault.\n";
+    save_state();
+    return 0;
   }
 
   if (!init_sdl_with_fallback(options.video_driver)) {
@@ -715,27 +1175,158 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  SDL_AudioSpec want = {};
+  SDL_AudioSpec have = {};
+  want.freq = 48000;
+  want.format = AUDIO_S16SYS;
+  want.channels = 2;
+  want.samples = 512;
+  SDL_AudioDeviceID audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+  if (audio_device != 0) {
+    SDL_PauseAudioDevice(audio_device, 0);
+    std::cout << "Audio device opened at " << have.freq << " Hz\n";
+  } else {
+    std::cout << "Failed to open audio device: " << SDL_GetError() << "\n";
+  }
+
   std::cout << "Window created. Press ESC or close the window to exit.\n";
 
   double target_fps = options.fps_override.value_or(core.target_fps());
   FramePacer pacer(target_fps);
+  double audio_accum = 0.0;
+  const int sample_rate = (audio_device != 0) ? have.freq : 0;
+  const std::size_t max_queue_bytes = static_cast<std::size_t>(sample_rate * 4 * 2);
 
   bool running = true;
+  bool show_help = options.show_help_overlay;
+  std::uint8_t joypad_state = 0xFF;
+  long long frame_count = 0;
+  auto update_joypad = [&](SDL_Keycode key, bool pressed) -> bool {
+    auto set_bit = [&](int bit, bool down) {
+      std::uint8_t before = joypad_state;
+      if (down) {
+        joypad_state = static_cast<std::uint8_t>(joypad_state & ~(1u << bit));
+      } else {
+        joypad_state = static_cast<std::uint8_t>(joypad_state | (1u << bit));
+      }
+      return joypad_state != before;
+    };
+
+    if (input_config.resolve(gbemu::common::InputAction::A, key)) return set_bit(0, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::B, key)) return set_bit(1, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Select, key)) return set_bit(2, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Start, key)) return set_bit(3, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Right, key)) return set_bit(4, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Left, key)) return set_bit(5, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Up, key)) return set_bit(6, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Down, key)) return set_bit(7, pressed);
+    return false;
+  };
+
+  auto build_help_text = [&]() {
+    std::string text;
+    text += "GBEMU HELP\n";
+    text += "F1 WINDOW OVERLAY\n";
+    text += "F2 CGB COLOR\n";
+    text += "F3 TOGGLE HELP\n";
+    text += "F5 SAVE STATE\n";
+    text += "F9 LOAD STATE\n";
+    text += "A: " + key_label(input_config.key_for(gbemu::common::InputAction::A));
+    text += "  B: " + key_label(input_config.key_for(gbemu::common::InputAction::B)) + "\n";
+    text += "SELECT: " + key_label(input_config.key_for(gbemu::common::InputAction::Select));
+    text += "  START: " + key_label(input_config.key_for(gbemu::common::InputAction::Start)) + "\n";
+    text += "UP: " + key_label(input_config.key_for(gbemu::common::InputAction::Up));
+    text += " DOWN: " + key_label(input_config.key_for(gbemu::common::InputAction::Down)) + "\n";
+    text += "LEFT: " + key_label(input_config.key_for(gbemu::common::InputAction::Left));
+    text += " RIGHT: " + key_label(input_config.key_for(gbemu::common::InputAction::Right)) + "\n";
+    return text;
+  };
+  bool debug_window_overlay = options.debug_window_overlay;
+  bool cgb_color_correction = options.cgb_color_correction;
   while (running) {
+    if (core.cpu_faulted()) {
+      dump_cpu_fault();
+      save_state();
+      break;
+    }
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) {
         running = false;
       } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
         running = false;
+      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F1) {
+        debug_window_overlay = !debug_window_overlay;
+        core.set_debug_window_overlay(debug_window_overlay);
+        std::cout << "Debug window overlay: " << (debug_window_overlay ? "ON" : "OFF") << "\n";
+      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F2) {
+        cgb_color_correction = !cgb_color_correction;
+        core.set_cgb_color_correction(cgb_color_correction);
+        std::cout << "CGB color correction: " << (cgb_color_correction ? "ON" : "OFF") << "\n";
+      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F3) {
+        show_help = !show_help;
+        std::cout << "Help overlay: " << (show_help ? "ON" : "OFF") << "\n";
+      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F5) {
+        save_full_state();
+      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F9) {
+        load_full_state();
+      } else if (event.type == SDL_KEYDOWN) {
+        if (update_joypad(event.key.keysym.sym, true)) {
+          core.set_joypad_state(joypad_state);
+          core.request_interrupt(4);
+        }
+      } else if (event.type == SDL_KEYUP) {
+        if (update_joypad(event.key.keysym.sym, false)) {
+          core.set_joypad_state(joypad_state);
+          core.request_interrupt(4);
+        }
       }
     }
     core.step_frame();
+    log_boot_state(frame_count);
+    ++frame_count;
     SDL_UpdateTexture(texture, nullptr, core.framebuffer(), core.framebuffer_stride_bytes());
     SDL_RenderClear(renderer);
     SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+    if (show_help) {
+      int w = fb_width * scale;
+      int h = fb_height * scale;
+      int panel_width = w > 360 ? 360 : w - 20;
+      int panel_height = 150;
+      SDL_Rect panel{10, 10, panel_width, panel_height};
+      SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+      SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
+      SDL_RenderFillRect(renderer, &panel);
+      SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200);
+      SDL_RenderDrawRect(renderer, &panel);
+      SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+      std::string help = build_help_text();
+      draw_text(renderer, panel.x + 8, panel.y + 8, 2, help, SDL_Color{255, 255, 255, 255});
+    }
     SDL_RenderPresent(renderer);
+    if (audio_device != 0 && sample_rate > 0) {
+      audio_accum += static_cast<double>(sample_rate) / target_fps;
+      int samples = static_cast<int>(audio_accum);
+      if (samples > 0) {
+        audio_accum -= samples;
+        if (SDL_GetQueuedAudioSize(audio_device) < max_queue_bytes) {
+          std::vector<std::int16_t> audio;
+          core.generate_audio(sample_rate, samples, &audio);
+          if (!audio.empty()) {
+            SDL_QueueAudio(audio_device, audio.data(),
+                           static_cast<Uint32>(audio.size() * sizeof(std::int16_t)));
+          }
+        }
+      }
+    }
     pacer.sleep();
+  }
+
+  save_state();
+
+  if (audio_device != 0) {
+    SDL_CloseAudioDevice(audio_device);
   }
 
   SDL_DestroyTexture(texture);

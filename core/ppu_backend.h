@@ -16,6 +16,7 @@ class PpuBackend {
   virtual int height() const = 0;
   virtual int stride_bytes() const = 0;
   virtual const std::uint32_t* framebuffer() const = 0;
+  virtual std::uint32_t* framebuffer_mut() = 0;
 
   virtual void step_frame() = 0;
 };

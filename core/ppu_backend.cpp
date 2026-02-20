@@ -15,6 +15,7 @@ class GbPpuBackend final : public PpuBackend {
   int height() const override { return height_; }
   int stride_bytes() const override { return width_ * static_cast<int>(sizeof(std::uint32_t)); }
   const std::uint32_t* framebuffer() const override { return framebuffer_.data(); }
+  std::uint32_t* framebuffer_mut() override { return framebuffer_.data(); }
 
   void step_frame() override {
     ++frame_counter_;
@@ -56,6 +57,7 @@ class GbcPpuBackend final : public PpuBackend {
   int height() const override { return height_; }
   int stride_bytes() const override { return width_ * static_cast<int>(sizeof(std::uint32_t)); }
   const std::uint32_t* framebuffer() const override { return framebuffer_.data(); }
+  std::uint32_t* framebuffer_mut() override { return framebuffer_.data(); }
 
   void step_frame() override {
     ++frame_counter_;
@@ -94,6 +96,7 @@ class GbaPpuBackend final : public PpuBackend {
   int height() const override { return height_; }
   int stride_bytes() const override { return width_ * static_cast<int>(sizeof(std::uint32_t)); }
   const std::uint32_t* framebuffer() const override { return framebuffer_.data(); }
+  std::uint32_t* framebuffer_mut() override { return framebuffer_.data(); }
 
   void step_frame() override {
     ++frame_counter_;

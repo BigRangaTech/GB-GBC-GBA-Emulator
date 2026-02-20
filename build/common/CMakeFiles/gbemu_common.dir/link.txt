@@ -1,0 +1,2 @@
+/usr/bin/ar qc libgbemu_common.a CMakeFiles/gbemu_common.dir/common.cpp.o CMakeFiles/gbemu_common.dir/config.cpp.o CMakeFiles/gbemu_common.dir/input.cpp.o CMakeFiles/gbemu_common.dir/rom.cpp.o
+/usr/bin/ranlib libgbemu_common.a

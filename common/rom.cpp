@@ -43,4 +43,25 @@ bool read_file(const std::string& path, std::vector<std::uint8_t>* out, std::str
   return true;
 }
 
+bool write_file(const std::string& path, const std::vector<std::uint8_t>& data, std::string* error) {
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  if (!file) {
+    if (error) {
+      *error = "Failed to open file for writing";
+    }
+    return false;
+  }
+  if (!data.empty()) {
+    file.write(reinterpret_cast<const char*>(data.data()),
+               static_cast<std::streamsize>(data.size()));
+    if (!file) {
+      if (error) {
+        *error = "Failed to write file";
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace gbemu::common

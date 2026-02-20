@@ -1,6 +1,8 @@
 #include "core.h"
 
 #include "common.h"
+#include "timing.h"
+#include "state_io.h"
 
 namespace gbemu::core {
 
@@ -35,7 +37,29 @@ const std::uint32_t* EmulatorCore::framebuffer() const {
 }
 
 void EmulatorCore::step_frame() {
-  ppu_.step_frame();
+  int cycles_target = 0;
+  switch (system_) {
+    case System::GBA:
+      cycles_target = kGbaCyclesPerFrame;
+      break;
+    case System::GB:
+    case System::GBC:
+    default:
+      cycles_target = kGbCyclesPerFrame;
+      break;
+  }
+
+  int cycles = 0;
+  while (cycles < cycles_target && !cpu_.faulted()) {
+    int used = cpu_.step();
+    if (used <= 0) {
+      break;
+    }
+    mmu_.step(used);
+    apu_.step(used, &mmu_);
+    ppu_.step(used, &mmu_);
+    cycles += used;
+  }
 }
 
 double EmulatorCore::target_fps() const {
@@ -53,6 +77,131 @@ std::string EmulatorCore::version() const {
   return gbemu::common::version();
 }
 
+bool EmulatorCore::cpu_faulted() const {
+  return cpu_.faulted();
+}
+
+std::string EmulatorCore::cpu_fault_reason() const {
+  return cpu_.fault_reason();
+}
+
+std::uint16_t EmulatorCore::cpu_pc() const {
+  return cpu_.last_pc();
+}
+
+std::uint8_t EmulatorCore::cpu_opcode() const {
+  return cpu_.last_opcode();
+}
+
+void EmulatorCore::set_cpu_trace_enabled(bool enabled) {
+  cpu_.set_trace_enabled(enabled);
+}
+
+std::vector<Cpu::TraceEntry> EmulatorCore::cpu_trace() const {
+  return cpu_.trace();
+}
+
+void EmulatorCore::set_debug_window_overlay(bool enabled) {
+  ppu_.set_debug_window_overlay(enabled);
+}
+
+void EmulatorCore::set_cgb_color_correction(bool enabled) {
+  ppu_.set_cgb_color_correction(enabled);
+}
+
+void EmulatorCore::set_joypad_state(std::uint8_t state) {
+  mmu_.set_joypad_state(state);
+}
+
+void EmulatorCore::request_interrupt(std::uint8_t bit) {
+  mmu_.request_interrupt(bit);
+}
+
+void EmulatorCore::generate_audio(int sample_rate, int samples, std::vector<std::int16_t>* out) {
+  apu_.generate_samples(sample_rate, samples, &mmu_, out);
+}
+
+bool EmulatorCore::boot_rom_enabled() const {
+  return mmu_.boot_rom_enabled();
+}
+
+bool EmulatorCore::has_battery() const {
+  return mmu_.has_battery();
+}
+
+bool EmulatorCore::has_ram() const {
+  return mmu_.has_ram();
+}
+
+bool EmulatorCore::has_rtc() const {
+  return mmu_.has_rtc();
+}
+
+std::vector<std::uint8_t> EmulatorCore::ram_data() const {
+  return mmu_.ram_data();
+}
+
+void EmulatorCore::load_ram_data(const std::vector<std::uint8_t>& data) {
+  mmu_.load_ram_data(data);
+}
+
+std::vector<std::uint8_t> EmulatorCore::rtc_data() const {
+  return mmu_.rtc_data();
+}
+
+void EmulatorCore::load_rtc_data(const std::vector<std::uint8_t>& data) {
+  mmu_.load_rtc_data(data);
+}
+
+bool EmulatorCore::save_state(std::vector<std::uint8_t>* out) const {
+  if (!out) {
+    return false;
+  }
+  out->clear();
+  using namespace gbemu::core::state_io;
+  out->push_back('G');
+  out->push_back('B');
+  out->push_back('S');
+  out->push_back('T');
+  write_u16(*out, 2);
+  write_u8(*out, static_cast<std::uint8_t>(system_));
+  cpu_.serialize(out);
+  mmu_.serialize(out);
+  ppu_.serialize(out);
+  apu_.serialize(out);
+  return true;
+}
+
+bool EmulatorCore::load_state(const std::vector<std::uint8_t>& data, std::string* error) {
+  using namespace gbemu::core::state_io;
+  if (data.size() < 6) {
+    if (error) *error = "State data too small";
+    return false;
+  }
+  if (!(data[0] == 'G' && data[1] == 'B' && data[2] == 'S' && data[3] == 'T')) {
+    if (error) *error = "Invalid state header";
+    return false;
+  }
+  std::size_t offset = 4;
+  std::uint16_t version = 0;
+  if (!read_u16(data, offset, version)) return false;
+  if (version != 2) {
+    if (error) *error = "Unsupported state version";
+    return false;
+  }
+  std::uint8_t sys = 0;
+  if (!read_u8(data, offset, sys)) return false;
+  if (sys != static_cast<std::uint8_t>(system_)) {
+    if (error) *error = "State system mismatch";
+    return false;
+  }
+  if (!cpu_.deserialize(data, offset, error)) return false;
+  if (!mmu_.deserialize(data, offset, error)) return false;
+  if (!ppu_.deserialize(data, offset, error)) return false;
+  if (!apu_.deserialize(data, offset, error)) return false;
+  return true;
+}
+
 bool EmulatorCore::load_rom(const std::vector<std::uint8_t>& rom,
                             const std::vector<std::uint8_t>& boot_rom,
                             std::string* error) {
@@ -61,6 +210,7 @@ bool EmulatorCore::load_rom(const std::vector<std::uint8_t>& rom,
   }
   cpu_.connect(&mmu_);
   cpu_.reset();
+  apu_.reset();
   return true;
 }
 
