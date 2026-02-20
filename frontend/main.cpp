@@ -2,17 +2,24 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <SDL2/SDL.h>
+#ifdef GBEMU_HAS_SDL_IMAGE
+#include <SDL2/SDL_image.h>
+#endif
 
 #include "core.h"
 #include "config.h"
@@ -24,6 +31,169 @@ namespace {
 struct Glyph {
   std::array<std::uint8_t, 7> rows{};
 };
+
+std::string to_lower(std::string_view value);
+std::string trim_ascii(std::string_view value);
+std::optional<bool> parse_bool(std::string_view value);
+gbemu::core::System detect_system(const std::vector<std::uint8_t>& data);
+
+enum class UiTheme {
+  Retro,
+  Minimal,
+  Deck,
+};
+
+struct UiThemeDef {
+  const char* id = "";
+  const char* display = "";
+  SDL_Color bg_primary{};
+  SDL_Color bg_secondary{};
+  SDL_Color panel{};
+  SDL_Color panel_border{};
+  SDL_Color text{};
+  SDL_Color accent{};
+  int panel_padding = 8;
+  int border_thickness = 1;
+  int font_scale = 2;
+};
+
+struct LauncherLayout {
+  SDL_Rect header{};
+  SDL_Rect search_box{};
+  SDL_Rect settings_button{};
+  SDL_Rect filter_hit{};
+  SDL_Rect list_panel{};
+  SDL_Rect detail_panel{};
+  SDL_Rect play_button{};
+  SDL_Rect favorite_button{};
+  int card_h = 38;
+  int visible = 1;
+  int start_y = 0;
+};
+
+const UiThemeDef& theme_def(UiTheme theme) {
+  static const UiThemeDef kRetro{
+      "retro",
+      "RETRO HARDWARE",
+      SDL_Color{10, 24, 12, 255},
+      SDL_Color{18, 40, 20, 255},
+      SDL_Color{10, 22, 12, 210},
+      SDL_Color{120, 201, 90, 255},
+      SDL_Color{186, 234, 165, 255},
+      SDL_Color{255, 224, 120, 255},
+      10,
+      2,
+      2,
+  };
+  static const UiThemeDef kMinimal{
+      "minimal",
+      "MODERN MINIMAL",
+      SDL_Color{244, 246, 248, 255},
+      SDL_Color{230, 234, 238, 255},
+      SDL_Color{250, 250, 250, 230},
+      SDL_Color{120, 128, 136, 255},
+      SDL_Color{24, 28, 32, 255},
+      SDL_Color{20, 110, 220, 255},
+      12,
+      1,
+      2,
+  };
+  static const UiThemeDef kDeck{
+      "deck",
+      "DECK STYLE",
+      SDL_Color{12, 14, 22, 255},
+      SDL_Color{18, 24, 36, 255},
+      SDL_Color{12, 16, 26, 220},
+      SDL_Color{84, 182, 176, 255},
+      SDL_Color{220, 230, 238, 255},
+      SDL_Color{88, 210, 200, 255},
+      12,
+      2,
+      2,
+  };
+  switch (theme) {
+    case UiTheme::Retro: return kRetro;
+    case UiTheme::Deck: return kDeck;
+    case UiTheme::Minimal:
+    default:
+      return kMinimal;
+  }
+}
+
+std::optional<UiTheme> parse_ui_theme(std::string_view value) {
+  std::string lower = to_lower(std::string(value));
+  if (lower == "retro") {
+    return UiTheme::Retro;
+  }
+  if (lower == "minimal" || lower == "modern") {
+    return UiTheme::Minimal;
+  }
+  if (lower == "deck") {
+    return UiTheme::Deck;
+  }
+  return std::nullopt;
+}
+
+std::string ui_theme_name(UiTheme theme) {
+  switch (theme) {
+    case UiTheme::Retro: return "retro";
+    case UiTheme::Minimal: return "minimal";
+    case UiTheme::Deck: return "deck";
+    default: return "retro";
+  }
+}
+
+UiTheme next_theme(UiTheme theme, int direction) {
+  int idx = 0;
+  switch (theme) {
+    case UiTheme::Retro: idx = 0; break;
+    case UiTheme::Minimal: idx = 1; break;
+    case UiTheme::Deck: idx = 2; break;
+    default: idx = 0; break;
+  }
+  idx = (idx + direction + 3) % 3;
+  if (idx == 1) return UiTheme::Minimal;
+  if (idx == 2) return UiTheme::Deck;
+  return UiTheme::Retro;
+}
+
+enum class UiMode {
+  Hidden,
+  Menu,
+  Launcher,
+  Settings,
+  InputMap,
+};
+
+enum class LauncherFilter {
+  All,
+  Favorites,
+  Recents,
+};
+
+std::string launcher_filter_name(LauncherFilter filter) {
+  switch (filter) {
+    case LauncherFilter::Favorites: return "favorites";
+    case LauncherFilter::Recents: return "recents";
+    case LauncherFilter::All:
+    default:
+      return "all";
+  }
+}
+
+LauncherFilter next_launcher_filter(LauncherFilter filter, int direction) {
+  int idx = 0;
+  switch (filter) {
+    case LauncherFilter::All: idx = 0; break;
+    case LauncherFilter::Favorites: idx = 1; break;
+    case LauncherFilter::Recents: idx = 2; break;
+    default: idx = 0; break;
+  }
+  idx = (idx + direction + 3) % 3;
+  if (idx == 1) return LauncherFilter::Favorites;
+  if (idx == 2) return LauncherFilter::Recents;
+  return LauncherFilter::All;
+}
 
 const Glyph& glyph_for(char c) {
   static const Glyph empty{{0, 0, 0, 0, 0, 0, 0}};
@@ -66,6 +236,7 @@ const Glyph& glyph_for(char c) {
       {'9', {{0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}}},
       {':', {{0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00}}},
       {'-', {{0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}}},
+      {'|', {{0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}}},
       {'/', {{0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00}}},
       {'+', {{0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00}}},
       {'?', {{0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04}}},
@@ -88,11 +259,34 @@ std::string upper_ascii(const std::string& input) {
 }
 
 std::string key_label(int keycode) {
+  if (keycode <= 0) {
+    return "NONE";
+  }
   const char* name = SDL_GetKeyName(static_cast<SDL_Keycode>(keycode));
   if (!name || !*name) {
     return "?";
   }
   return upper_ascii(name);
+}
+
+std::string controller_button_label(int button) {
+  const char* name = SDL_GameControllerGetStringForButton(
+      static_cast<SDL_GameControllerButton>(button));
+  if (!name || !*name) {
+    return "BUTTON";
+  }
+  return upper_ascii(name);
+}
+
+std::string controller_axis_label(int axis, bool positive) {
+  const char* name = SDL_GameControllerGetStringForAxis(
+      static_cast<SDL_GameControllerAxis>(axis));
+  if (!name || !*name) {
+    return "AXIS";
+  }
+  std::string label = upper_ascii(name);
+  label.push_back(positive ? '+' : '-');
+  return label;
 }
 
 void draw_text(SDL_Renderer* renderer, int x, int y, int scale, const std::string& text,
@@ -123,6 +317,160 @@ void draw_text(SDL_Renderer* renderer, int x, int y, int scale, const std::strin
   }
 }
 
+int text_width(const std::string& text, int scale) {
+  int width = 0;
+  int line = 0;
+  for (char ch : text) {
+    if (ch == '\n') {
+      width = std::max(width, line);
+      line = 0;
+      continue;
+    }
+    line += 6 * scale;
+  }
+  width = std::max(width, line);
+  return width;
+}
+
+bool point_in_rect(int x, int y, const SDL_Rect& rect) {
+  return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+void fill_rect(SDL_Renderer* renderer, const SDL_Rect& rect, SDL_Color color) {
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  SDL_RenderFillRect(renderer, &rect);
+}
+
+void draw_panel(SDL_Renderer* renderer, const SDL_Rect& rect, const UiThemeDef& theme) {
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  fill_rect(renderer, rect, theme.panel);
+  SDL_SetRenderDrawColor(renderer, theme.panel_border.r, theme.panel_border.g,
+                         theme.panel_border.b, theme.panel_border.a);
+  for (int i = 0; i < theme.border_thickness; ++i) {
+    SDL_Rect r{rect.x + i, rect.y + i, rect.w - i * 2, rect.h - i * 2};
+    SDL_RenderDrawRect(renderer, &r);
+  }
+}
+
+void draw_menu_decor(SDL_Renderer* renderer, const SDL_Rect& rect, const UiThemeDef& theme) {
+  if (!renderer) {
+    return;
+  }
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  if (std::string(theme.id) == "retro") {
+    SDL_SetRenderDrawColor(renderer, theme.accent.r, theme.accent.g, theme.accent.b, 30);
+    for (int y = rect.y + 2; y < rect.y + rect.h; y += 3) {
+      SDL_RenderDrawLine(renderer, rect.x + 2, y, rect.x + rect.w - 3, y);
+    }
+  } else if (std::string(theme.id) == "minimal") {
+    for (int y = 0; y < rect.h; ++y) {
+      std::uint8_t shade = static_cast<std::uint8_t>(theme.bg_secondary.r + (y * 8) / rect.h);
+      SDL_SetRenderDrawColor(renderer, shade, shade, shade, 20);
+      SDL_RenderDrawLine(renderer, rect.x + 1, rect.y + y, rect.x + rect.w - 2, rect.y + y);
+    }
+  } else {
+    SDL_SetRenderDrawColor(renderer, theme.accent.r, theme.accent.g, theme.accent.b, 40);
+    for (int i = 0; i < rect.w; i += 6) {
+      SDL_RenderDrawLine(renderer, rect.x + i, rect.y + rect.h - 2,
+                         rect.x + i + 10, rect.y + rect.h - 12);
+    }
+  }
+}
+
+struct CoverTexture {
+  SDL_Texture* texture = nullptr;
+  int width = 0;
+  int height = 0;
+};
+
+SDL_Surface* load_ppm_surface(const std::string& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    return nullptr;
+  }
+  std::string magic;
+  file >> magic;
+  if (magic != "P6") {
+    return nullptr;
+  }
+  int width = 0;
+  int height = 0;
+  int maxval = 0;
+  char ch;
+  file.get(ch);
+  while (file.peek() == '#') {
+    std::string comment;
+    std::getline(file, comment);
+  }
+  file >> width >> height >> maxval;
+  file.get(ch);
+  if (width <= 0 || height <= 0 || maxval <= 0) {
+    return nullptr;
+  }
+  std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 3);
+  file.read(reinterpret_cast<char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+  if (!file) {
+    return nullptr;
+  }
+
+  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(width) * height * 4);
+  for (int i = 0, j = 0; i < width * height; ++i, j += 3) {
+    rgba[i * 4 + 0] = pixels[j + 0];
+    rgba[i * 4 + 1] = pixels[j + 1];
+    rgba[i * 4 + 2] = pixels[j + 2];
+    rgba[i * 4 + 3] = 255;
+  }
+  SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(
+      rgba.data(), width, height, 32, width * 4,
+      0x000000FFu, 0x0000FF00u, 0x00FF0000u, 0xFF000000u);
+  if (!surface) {
+    return nullptr;
+  }
+  SDL_Surface* converted = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_ARGB8888, 0);
+  SDL_FreeSurface(surface);
+  if (!converted) {
+    return nullptr;
+  }
+  return converted;
+}
+
+SDL_Surface* load_cover_surface(const std::string& path) {
+  std::string ext = to_lower(std::filesystem::path(path).extension().string());
+#ifdef GBEMU_HAS_SDL_IMAGE
+  SDL_Surface* loaded = IMG_Load(path.c_str());
+  if (loaded) {
+    SDL_Surface* converted = SDL_ConvertSurfaceFormat(loaded, SDL_PIXELFORMAT_ARGB8888, 0);
+    SDL_FreeSurface(loaded);
+    return converted;
+  }
+#endif
+  if (ext == ".bmp") {
+    SDL_Surface* loaded = SDL_LoadBMP(path.c_str());
+    if (!loaded) {
+      return nullptr;
+    }
+    SDL_Surface* converted = SDL_ConvertSurfaceFormat(loaded, SDL_PIXELFORMAT_ARGB8888, 0);
+    SDL_FreeSurface(loaded);
+    return converted;
+  }
+  if (ext == ".ppm") {
+    return load_ppm_surface(path);
+  }
+  return nullptr;
+}
+
+SDL_Rect fit_rect(int dest_w, int dest_h, int src_w, int src_h, int x, int y) {
+  if (src_w <= 0 || src_h <= 0) {
+    return SDL_Rect{x, y, dest_w, dest_h};
+  }
+  float scale = std::min(static_cast<float>(dest_w) / src_w, static_cast<float>(dest_h) / src_h);
+  int w = static_cast<int>(src_w * scale);
+  int h = static_cast<int>(src_h * scale);
+  int dx = x + (dest_w - w) / 2;
+  int dy = y + (dest_h - h) / 2;
+  return SDL_Rect{dx, dy, w, h};
+}
+
 std::string to_ascii_title(const std::vector<std::uint8_t>& data, std::size_t offset, std::size_t len) {
   if (data.size() < offset + len) {
     return "";
@@ -137,6 +485,324 @@ std::string to_ascii_title(const std::vector<std::uint8_t>& data, std::size_t of
     s.pop_back();
   }
   return s;
+}
+
+struct RomEntry {
+  std::string path;
+  std::string title;
+  gbemu::core::System system = gbemu::core::System::GB;
+  std::uintmax_t size = 0;
+  std::filesystem::file_time_type modified{};
+  std::string cover_path;
+};
+
+bool matches_search(const RomEntry& entry, const std::string& query) {
+  std::string trimmed = trim_ascii(query);
+  if (trimmed.empty()) {
+    return true;
+  }
+  std::string needle = to_lower(trimmed);
+  std::string title = to_lower(entry.title);
+  if (title.find(needle) != std::string::npos) {
+    return true;
+  }
+  std::string filename = to_lower(std::filesystem::path(entry.path).filename().string());
+  if (filename.find(needle) != std::string::npos) {
+    return true;
+  }
+  return false;
+}
+
+std::string system_short(gbemu::core::System system) {
+  switch (system) {
+    case gbemu::core::System::GBA: return "GBA";
+    case gbemu::core::System::GBC: return "GBC";
+    case gbemu::core::System::GB:
+    default:
+      return "GB";
+  }
+}
+
+std::string format_bytes(std::uintmax_t bytes) {
+  if (bytes >= (1ull << 20)) {
+    double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(mb < 10.0 ? 1 : 0) << mb << " MB";
+    return out.str();
+  }
+  if (bytes >= (1ull << 10)) {
+    double kb = static_cast<double>(bytes) / 1024.0;
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(kb < 10.0 ? 1 : 0) << kb << " KB";
+    return out.str();
+  }
+  return std::to_string(bytes) + " B";
+}
+
+std::vector<std::string> split_list(std::string_view value) {
+  std::vector<std::string> out;
+  std::string current;
+  for (char c : value) {
+    if (c == ';' || c == ',') {
+      if (!current.empty()) {
+        out.push_back(current);
+        current.clear();
+      }
+      continue;
+    }
+    current.push_back(c);
+  }
+  if (!current.empty()) {
+    out.push_back(current);
+  }
+  return out;
+}
+
+std::string find_cover_path(const std::filesystem::path& rom_path) {
+  std::vector<std::string> exts = {".png", ".jpg", ".jpeg", ".bmp", ".ppm"};
+  std::filesystem::path base = rom_path;
+  base.replace_extension();
+  for (const auto& ext : exts) {
+    std::filesystem::path candidate = base;
+    candidate += ext;
+    if (std::filesystem::exists(candidate)) {
+      return candidate.string();
+    }
+  }
+
+  std::filesystem::path filename = rom_path.stem();
+  std::filesystem::path covers_dir = rom_path.parent_path() / "covers";
+  for (const auto& ext : exts) {
+    std::filesystem::path candidate = covers_dir / filename;
+    candidate += ext;
+    if (std::filesystem::exists(candidate)) {
+      return candidate.string();
+    }
+  }
+
+  std::filesystem::path global_covers = std::filesystem::path("covers") / filename;
+  for (const auto& ext : exts) {
+    std::filesystem::path candidate = global_covers;
+    candidate += ext;
+    if (std::filesystem::exists(candidate)) {
+      return candidate.string();
+    }
+  }
+  return "";
+}
+
+bool rom_extension_ok(const std::filesystem::path& path) {
+  std::string ext = to_lower(path.extension().string());
+  return ext == ".gb" || ext == ".gbc" || ext == ".gba";
+}
+
+std::string rom_title_from_data(const std::vector<std::uint8_t>& data, gbemu::core::System system) {
+  if (system == gbemu::core::System::GBA) {
+    std::string title = to_ascii_title(data, 0xA0, 12);
+    return title;
+  }
+  return to_ascii_title(data, 0x0134, 16);
+}
+
+std::vector<RomEntry> scan_roms(const std::vector<std::filesystem::path>& roots) {
+  std::vector<RomEntry> out;
+  for (const auto& root : roots) {
+    if (root.empty() || !std::filesystem::exists(root)) {
+      continue;
+    }
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         it != std::filesystem::recursive_directory_iterator(); ++it) {
+      if (ec) {
+        break;
+      }
+      const auto& entry = *it;
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      const auto& path = entry.path();
+      if (!rom_extension_ok(path)) {
+        continue;
+      }
+      RomEntry rom;
+      rom.path = path.string();
+      rom.size = entry.file_size(ec);
+      rom.modified = entry.last_write_time(ec);
+      std::vector<std::uint8_t> data;
+      std::string error;
+      if (gbemu::common::read_file(rom.path, &data, &error)) {
+        rom.system = detect_system(data);
+        rom.title = rom_title_from_data(data, rom.system);
+      }
+      if (rom.title.empty()) {
+        rom.title = path.stem().string();
+      }
+      rom.cover_path = find_cover_path(path);
+      out.push_back(std::move(rom));
+    }
+  }
+  std::sort(out.begin(), out.end(), [](const RomEntry& a, const RomEntry& b) {
+    return a.title < b.title;
+  });
+  return out;
+}
+
+std::string escape_field(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char c : value) {
+    if (c == '\\' || c == '|') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
+  return out;
+}
+
+std::string unescape_field(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  bool escape = false;
+  for (char c : value) {
+    if (escape) {
+      out.push_back(c);
+      escape = false;
+    } else if (c == '\\') {
+      escape = true;
+    } else {
+      out.push_back(c);
+    }
+  }
+  if (escape) {
+    out.push_back('\\');
+  }
+  return out;
+}
+
+void load_launcher_state(const std::string& path,
+                         std::vector<std::string>* recents,
+                         std::unordered_set<std::string>* favorites) {
+  if (recents) recents->clear();
+  if (favorites) favorites->clear();
+  std::ifstream file(path);
+  if (!file) {
+    return;
+  }
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.size() < 3 || line[1] != '|') {
+      continue;
+    }
+    char kind = line[0];
+    std::string payload = unescape_field(line.substr(2));
+    if (kind == 'R') {
+      if (recents && !payload.empty()) {
+        recents->push_back(payload);
+      }
+    } else if (kind == 'F') {
+      if (favorites && !payload.empty()) {
+        favorites->insert(payload);
+      }
+    }
+  }
+}
+
+void save_launcher_state(const std::string& path,
+                         const std::vector<std::string>& recents,
+                         const std::unordered_set<std::string>& favorites) {
+  std::ofstream file(path, std::ios::trunc);
+  if (!file) {
+    return;
+  }
+  for (const auto& entry : recents) {
+    file << "R|" << escape_field(entry) << "\n";
+  }
+  std::vector<std::string> favs;
+  favs.reserve(favorites.size());
+  for (const auto& entry : favorites) {
+    favs.push_back(entry);
+  }
+  std::sort(favs.begin(), favs.end());
+  for (const auto& entry : favs) {
+    file << "F|" << escape_field(entry) << "\n";
+  }
+}
+
+struct UiState {
+  std::optional<UiTheme> theme;
+  std::optional<int> scale;
+  std::optional<double> fps;
+  std::optional<int> deadzone;
+  std::optional<bool> show_help;
+  std::optional<bool> audio;
+};
+
+UiState load_ui_state(const std::string& path) {
+  UiState state;
+  std::ifstream file(path);
+  if (!file) {
+    return state;
+  }
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    auto pos = line.find('=');
+    if (pos == std::string::npos) {
+      continue;
+    }
+    std::string key = to_lower(line.substr(0, pos));
+    std::string value = line.substr(pos + 1);
+    if (key == "ui_theme") {
+      state.theme = parse_ui_theme(value);
+    } else if (key == "scale") {
+      try {
+        state.scale = std::stoi(value);
+      } catch (...) {
+      }
+    } else if (key == "fps") {
+      try {
+        state.fps = std::stod(value);
+      } catch (...) {
+      }
+    } else if (key == "deadzone") {
+      try {
+        state.deadzone = std::stoi(value);
+      } catch (...) {
+      }
+    } else if (key == "show_help") {
+      auto parsed = parse_bool(value);
+      if (parsed.has_value()) {
+        state.show_help = parsed;
+      }
+    } else if (key == "audio") {
+      auto parsed = parse_bool(value);
+      if (parsed.has_value()) {
+        state.audio = parsed;
+      }
+    }
+  }
+  return state;
+}
+
+void save_ui_state(const std::string& path,
+                   UiTheme theme,
+                   int scale,
+                   double fps,
+                   int deadzone,
+                   bool show_help,
+                   bool audio_enabled) {
+  std::ofstream file(path, std::ios::trunc);
+  if (!file) {
+    return;
+  }
+  file << "ui_theme=" << ui_theme_name(theme) << "\n";
+  file << "scale=" << scale << "\n";
+  file << "fps=" << fps << "\n";
+  file << "deadzone=" << deadzone << "\n";
+  file << "show_help=" << (show_help ? "true" : "false") << "\n";
+  file << "audio=" << (audio_enabled ? "true" : "false") << "\n";
 }
 
 std::string gb_rom_size(std::uint8_t code) {
@@ -176,6 +842,21 @@ std::string to_lower(std::string_view value) {
     out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
   }
   return out;
+}
+
+std::string trim_ascii(std::string_view value) {
+  std::size_t start = 0;
+  while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+    ++start;
+  }
+  if (start == value.size()) {
+    return "";
+  }
+  std::size_t end = value.size() - 1;
+  while (end > start && std::isspace(static_cast<unsigned char>(value[end]))) {
+    --end;
+  }
+  return std::string(value.substr(start, end - start + 1));
 }
 
 std::optional<bool> parse_bool(std::string_view value) {
@@ -219,6 +900,9 @@ struct Options {
   std::optional<double> fps_override;
   std::optional<int> scale_override;
   std::optional<std::string> video_driver;
+  std::optional<UiTheme> ui_theme;
+  bool launcher = false;
+  std::vector<std::string> rom_dirs;
   bool cpu_trace = false;
   bool boot_trace = false;
   bool headless = false;
@@ -237,6 +921,9 @@ void print_usage(const char* exe) {
   std::cout << "  --fps <value>          Override target frame rate (0 to disable pacing)\n";
   std::cout << "  --scale <int>          Override window scale factor\n";
   std::cout << "  --video-driver <name>  Force SDL video driver (wayland or x11)\n";
+  std::cout << "  --ui-theme <name>      UI theme: retro | minimal | deck\n";
+  std::cout << "  --launcher             Start in launcher UI\n";
+  std::cout << "  --rom-dir <path>       Add ROM scan directory (repeatable)\n";
   std::cout << "  --boot-rom <path>      Boot ROM path (applies to the current ROM)\n";
   std::cout << "  --boot-rom-gb <path>   Boot ROM path for GB\n";
   std::cout << "  --boot-rom-gbc <path>  Boot ROM path for GBC\n";
@@ -292,6 +979,36 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
   std::string driver = config.get_string("video_driver", "");
   if (!driver.empty()) {
     options->video_driver = driver;
+  }
+
+  std::string ui_theme_value = config.get_string("ui_theme", "");
+  if (!ui_theme_value.empty()) {
+    auto parsed = parse_ui_theme(ui_theme_value);
+    if (parsed.has_value()) {
+      options->ui_theme = parsed;
+    } else {
+      std::cout << "Config warning: invalid ui_theme value '" << ui_theme_value << "'\n";
+    }
+  }
+
+  std::string launcher_value = config.get_string("launcher", "");
+  if (!launcher_value.empty()) {
+    auto parsed = parse_bool(launcher_value);
+    if (parsed.has_value()) {
+      options->launcher = *parsed;
+    } else {
+      std::cout << "Config warning: invalid launcher value '" << launcher_value << "'\n";
+    }
+  }
+
+  std::string rom_dirs_value = config.get_string("rom_dirs", "");
+  if (!rom_dirs_value.empty()) {
+    auto dirs = split_list(rom_dirs_value);
+    for (const auto& dir : dirs) {
+      if (!dir.empty()) {
+        options->rom_dirs.push_back(dir);
+      }
+    }
   }
 
   std::string trace_value = config.get_string("cpu_trace", "");
@@ -656,17 +1373,19 @@ void print_gba_header(const std::vector<std::uint8_t>& data) {
 }
 
 bool init_sdl_with_fallback(const std::optional<std::string>& driver_override) {
+  constexpr Uint32 kInitFlags = SDL_INIT_VIDEO | SDL_INIT_EVENTS |
+                                SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK;
   if (driver_override.has_value()) {
     std::string preferred = to_lower(*driver_override);
     if (preferred == "wayland") {
       SDL_setenv("SDL_VIDEODRIVER", "wayland", 1);
-      if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0) {
+      if (SDL_Init(kInitFlags) == 0) {
         return true;
       }
       std::string wayland_error = SDL_GetError();
       SDL_Quit();
       SDL_setenv("SDL_VIDEODRIVER", "x11", 1);
-      if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0) {
+      if (SDL_Init(kInitFlags) == 0) {
         std::cout << "Wayland init failed: " << wayland_error << ". Using X11 fallback.\n";
         return true;
       }
@@ -676,7 +1395,7 @@ bool init_sdl_with_fallback(const std::optional<std::string>& driver_override) {
     }
     if (preferred == "x11") {
       SDL_setenv("SDL_VIDEODRIVER", "x11", 1);
-      if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0) {
+      if (SDL_Init(kInitFlags) == 0) {
         return true;
       }
       std::cout << "SDL init failed with SDL_VIDEODRIVER=x11: " << SDL_GetError() << "\n";
@@ -688,7 +1407,7 @@ bool init_sdl_with_fallback(const std::optional<std::string>& driver_override) {
 
   const char* existing = SDL_getenv("SDL_VIDEODRIVER");
   if (existing && *existing) {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0) {
+    if (SDL_Init(kInitFlags) == 0) {
       return true;
     }
     std::cout << "SDL init failed with SDL_VIDEODRIVER=" << existing << ": "
@@ -697,14 +1416,14 @@ bool init_sdl_with_fallback(const std::optional<std::string>& driver_override) {
   }
 
   SDL_setenv("SDL_VIDEODRIVER", "wayland", 1);
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0) {
+  if (SDL_Init(kInitFlags) == 0) {
     return true;
   }
   std::string wayland_error = SDL_GetError();
   SDL_Quit();
 
   SDL_setenv("SDL_VIDEODRIVER", "x11", 1);
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0) {
+  if (SDL_Init(kInitFlags) == 0) {
     std::cout << "Wayland init failed: " << wayland_error << ". Using X11 fallback.\n";
     return true;
   }
@@ -759,6 +1478,25 @@ int main(int argc, char** argv) {
       options.cpu_trace = true;
     } else if (arg == "--boot-trace") {
       options.boot_trace = true;
+    } else if (arg == "--ui-theme") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --ui-theme\n";
+        return 1;
+      }
+      auto parsed = parse_ui_theme(argv[++i]);
+      if (!parsed.has_value()) {
+        std::cout << "Invalid ui-theme value: " << argv[i] << "\n";
+        return 1;
+      }
+      options.ui_theme = parsed;
+    } else if (arg == "--launcher") {
+      options.launcher = true;
+    } else if (arg == "--rom-dir") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --rom-dir\n";
+        return 1;
+      }
+      options.rom_dirs.emplace_back(argv[++i]);
     } else if (arg == "--headless") {
       options.headless = true;
     } else if (arg == "--frames") {
@@ -830,6 +1568,25 @@ int main(int argc, char** argv) {
       options.cpu_trace = true;
     } else if (arg == "--boot-trace") {
       options.boot_trace = true;
+    } else if (arg == "--ui-theme") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --ui-theme\n";
+        return 1;
+      }
+      auto parsed = parse_ui_theme(argv[++i]);
+      if (!parsed.has_value()) {
+        std::cout << "Invalid ui-theme value: " << argv[i] << "\n";
+        return 1;
+      }
+      options.ui_theme = parsed;
+    } else if (arg == "--launcher") {
+      options.launcher = true;
+    } else if (arg == "--rom-dir") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --rom-dir\n";
+        return 1;
+      }
+      options.rom_dirs.emplace_back(argv[++i]);
     } else if (arg == "--headless") {
       options.headless = true;
     } else if (arg == "--frames") {
@@ -907,7 +1664,12 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (options.rom_path.empty()) {
+  bool launcher_enabled = options.launcher;
+  if (launcher_enabled && options.headless) {
+    std::cout << "Launcher requires a window; disabling headless mode.\n";
+    options.headless = false;
+  }
+  if (options.rom_path.empty() && !launcher_enabled) {
     print_usage(argv[0]);
     return 1;
   }
@@ -927,41 +1689,71 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::string path = options.rom_path;
+  gbemu::common::InputConfig input_config;
+  input_config.set_default();
+  if (!config_path.empty()) {
+    gbemu::common::Config config_for_inputs;
+    std::string err;
+    config_for_inputs.load_file(config_path, &err);
+    input_config.load_from_config(config_for_inputs.values());
+  }
+
+  UiTheme ui_theme = options.ui_theme.value_or(UiTheme::Retro);
+  int theme_toast_frames = 0;
+  bool show_help_pref = options.show_help_overlay;
+
+  std::filesystem::path save_dir("saves");
+  std::error_code save_ec;
+  std::filesystem::create_directories(save_dir, save_ec);
+  std::filesystem::path launcher_state_path = save_dir / "launcher_state.txt";
+  std::filesystem::path ui_state_path = save_dir / "ui_state.conf";
+  std::filesystem::path input_map_path = save_dir / "input_map.conf";
+
+  if (std::filesystem::exists(input_map_path)) {
+    gbemu::common::Config config_override;
+    std::string err;
+    if (config_override.load_file(input_map_path.string(), &err)) {
+      input_config.load_from_config(config_override.values());
+    }
+  }
+  std::vector<std::string> recent_paths;
+  std::unordered_set<std::string> favorite_paths;
+  load_launcher_state(launcher_state_path.string(), &recent_paths, &favorite_paths);
+
+  UiState ui_state = load_ui_state(ui_state_path.string());
+  if (!options.ui_theme.has_value() && ui_state.theme.has_value()) {
+    ui_theme = *ui_state.theme;
+  }
+  if (!options.scale_override.has_value() && ui_state.scale.has_value()) {
+    options.scale_override = *ui_state.scale;
+  }
+  if (!options.fps_override.has_value() && ui_state.fps.has_value()) {
+    options.fps_override = *ui_state.fps;
+  }
+  if (ui_state.deadzone.has_value()) {
+    input_config.set_axis_deadzone(*ui_state.deadzone);
+  }
+  if (ui_state.show_help.has_value()) {
+    show_help_pref = *ui_state.show_help;
+  }
+  std::optional<bool> audio_pref = ui_state.audio;
+  std::filesystem::path save_path;
+  std::filesystem::path rtc_path;
+  std::filesystem::path state_path;
   std::vector<std::uint8_t> rom;
-  std::string error;
-  if (!gbemu::common::read_file(path, &rom, &error)) {
-    std::cout << "Failed to read ROM: " << path << ". " << error << "\n";
-    return 1;
-  }
+  std::string current_rom_path;
+  gbemu::core::System system = gbemu::core::System::GB;
+  std::uint8_t key_state = 0xFF;
+  std::uint8_t pad_state = 0xFF;
+  std::uint8_t joypad_state = 0xFF;
+  bool game_loaded = false;
+  bool boot_rom_last = false;
+  bool debug_window_overlay = options.debug_window_overlay;
+  bool cgb_color_correction = options.cgb_color_correction;
+  std::string launcher_error;
 
-  std::cout << "ROM size: " << rom.size() << " bytes\n";
-
-  gbemu::core::System detected_system = detect_system(rom);
-  gbemu::core::System system = options.system_override.value_or(detected_system);
-  core.set_system(system);
-
-  std::vector<std::uint8_t> boot_rom;
-  std::string boot_error;
-  if (!load_boot_rom(system, options, &boot_rom, &boot_error)) {
-    std::cout << "Boot ROM required for " << system_name(system) << " but not found. "
-              << boot_error << "\n";
-    return 1;
-  }
-
-  std::string load_error;
-  if (!core.load_rom(rom, boot_rom, &load_error)) {
-    std::cout << "Failed to load ROM into core: " << load_error << "\n";
-    return 1;
-  }
-  core.set_cpu_trace_enabled(options.cpu_trace);
-  core.set_debug_window_overlay(options.debug_window_overlay);
-  core.set_cgb_color_correction(options.cgb_color_correction);
-  core.set_joypad_state(0xFF);
-
-  bool boot_rom_last = core.boot_rom_enabled();
   auto log_boot_state = [&](long long frame) {
-    if (!options.boot_trace) {
+    if (!options.boot_trace || !game_loaded) {
       return;
     }
     bool now = core.boot_rom_enabled();
@@ -979,52 +1771,107 @@ int main(int argc, char** argv) {
     boot_rom_last = now;
   };
 
-  if (options.boot_trace) {
-    std::cout << "Boot ROM enabled: " << (boot_rom_last ? "yes" : "no") << "\n";
-  }
-
-  gbemu::common::InputConfig input_config;
-  input_config.set_default();
-  if (!config_path.empty()) {
-    gbemu::common::Config config_for_inputs;
-    std::string err;
-    config_for_inputs.load_file(config_path, &err);
-    input_config.load_from_config(config_for_inputs.values());
-  }
-
-  std::filesystem::path save_dir("saves");
-  std::error_code save_ec;
-  std::filesystem::create_directories(save_dir, save_ec);
-  std::filesystem::path rom_path = std::filesystem::path(path).filename();
-  std::filesystem::path save_base = save_dir / rom_path.stem();
-  std::filesystem::path save_path = save_base;
-  save_path += ".sav";
-  std::filesystem::path rtc_path = save_base;
-  rtc_path += ".rtc";
-  std::filesystem::path state_path = save_base;
-  state_path += ".state";
-
-  if (core.has_battery() && core.has_ram() && std::filesystem::exists(save_path)) {
-    std::vector<std::uint8_t> save_data;
-    std::string save_error;
-    if (gbemu::common::read_file(save_path.string(), &save_data, &save_error)) {
-      core.load_ram_data(save_data);
-      std::cout << "Loaded save RAM: " << save_path.string() << "\n";
-    } else {
-      std::cout << "Failed to read save RAM: " << save_error << "\n";
+  auto load_game = [&](const std::string& path, std::string* out_error) -> bool {
+    std::vector<std::uint8_t> data;
+    std::string error;
+    if (!gbemu::common::read_file(path, &data, &error)) {
+      if (out_error) {
+        *out_error = "Failed to read ROM: " + path + ". " + error;
+      }
+      return false;
     }
-  }
 
-  if (core.has_rtc() && std::filesystem::exists(rtc_path)) {
-    std::vector<std::uint8_t> rtc_data;
-    std::string rtc_error;
-    if (gbemu::common::read_file(rtc_path.string(), &rtc_data, &rtc_error)) {
-      core.load_rtc_data(rtc_data);
-      std::cout << "Loaded RTC data: " << rtc_path.string() << "\n";
-    } else {
-      std::cout << "Failed to read RTC data: " << rtc_error << "\n";
+    rom = std::move(data);
+    current_rom_path = path;
+    std::cout << "ROM size: " << rom.size() << " bytes\n";
+
+    gbemu::core::System detected_system = detect_system(rom);
+    system = options.system_override.value_or(detected_system);
+    core.set_system(system);
+
+    std::vector<std::uint8_t> boot_rom;
+    std::string boot_error;
+    if (!load_boot_rom(system, options, &boot_rom, &boot_error)) {
+      if (out_error) {
+        *out_error = "Boot ROM required for " + system_name(system) +
+                     " but not found. " + boot_error;
+      }
+      return false;
     }
-  }
+
+    std::string load_error;
+    if (!core.load_rom(rom, boot_rom, &load_error)) {
+      if (out_error) {
+        *out_error = "Failed to load ROM into core: " + load_error;
+      }
+      return false;
+    }
+
+    core.set_cpu_trace_enabled(options.cpu_trace);
+    core.set_debug_window_overlay(debug_window_overlay);
+    core.set_cgb_color_correction(cgb_color_correction);
+    key_state = 0xFF;
+    pad_state = 0xFF;
+    joypad_state = 0xFF;
+    core.set_joypad_state(joypad_state);
+
+    std::filesystem::path rom_path = std::filesystem::path(path).filename();
+    std::filesystem::path save_base = save_dir / rom_path.stem();
+    save_path = save_base;
+    save_path += ".sav";
+    rtc_path = save_base;
+    rtc_path += ".rtc";
+    state_path = save_base;
+    state_path += ".state";
+
+    if (core.has_battery() && core.has_ram() && std::filesystem::exists(save_path)) {
+      std::vector<std::uint8_t> save_data;
+      std::string save_error;
+      if (gbemu::common::read_file(save_path.string(), &save_data, &save_error)) {
+        core.load_ram_data(save_data);
+        std::cout << "Loaded save RAM: " << save_path.string() << "\n";
+      } else {
+        std::cout << "Failed to read save RAM: " << save_error << "\n";
+      }
+    }
+
+    if (core.has_rtc() && std::filesystem::exists(rtc_path)) {
+      std::vector<std::uint8_t> rtc_data;
+      std::string rtc_error;
+      if (gbemu::common::read_file(rtc_path.string(), &rtc_data, &rtc_error)) {
+        core.load_rtc_data(rtc_data);
+        std::cout << "Loaded RTC data: " << rtc_path.string() << "\n";
+      } else {
+        std::cout << "Failed to read RTC data: " << rtc_error << "\n";
+      }
+    }
+
+    if (system == gbemu::core::System::GBA) {
+      print_gba_header(rom);
+    } else if (rom.size() >= 0x150) {
+      print_gb_header(rom);
+    } else {
+      std::cout << "Unknown or too-small ROM.\n";
+    }
+
+    boot_rom_last = core.boot_rom_enabled();
+    if (options.boot_trace) {
+      std::cout << "Boot ROM enabled: " << (boot_rom_last ? "yes" : "no") << "\n";
+    }
+
+    if (!path.empty()) {
+      recent_paths.erase(std::remove(recent_paths.begin(), recent_paths.end(), path),
+                         recent_paths.end());
+      recent_paths.insert(recent_paths.begin(), path);
+      if (recent_paths.size() > 10) {
+        recent_paths.resize(10);
+      }
+      save_launcher_state(launcher_state_path.string(), recent_paths, favorite_paths);
+    }
+
+    game_loaded = true;
+    return true;
+  };
 
   auto dump_cpu_fault = [&core]() {
     std::cout << "CPU fault at PC=0x" << std::hex << std::setw(4) << std::setfill('0')
@@ -1045,15 +1892,10 @@ int main(int argc, char** argv) {
     }
   };
 
-  if (system == gbemu::core::System::GBA) {
-    print_gba_header(rom);
-  } else if (rom.size() >= 0x150) {
-    print_gb_header(rom);
-  } else {
-    std::cout << "Unknown or too-small ROM.\n";
-  }
-
   auto save_state = [&]() {
+    if (!game_loaded) {
+      return;
+    }
     if (core.has_battery() && core.has_ram()) {
       std::vector<std::uint8_t> data = core.ram_data();
       std::string save_error;
@@ -1074,7 +1916,18 @@ int main(int argc, char** argv) {
     }
   };
 
+  auto save_input_map = [&]() {
+    std::ofstream file(input_map_path.string(), std::ios::trunc);
+    if (!file) {
+      return;
+    }
+    input_config.write_config(file);
+  };
+
   auto save_full_state = [&]() {
+    if (!game_loaded) {
+      return;
+    }
     std::vector<std::uint8_t> state;
     if (!core.save_state(&state)) {
       std::cout << "Failed to build save state\n";
@@ -1089,6 +1942,9 @@ int main(int argc, char** argv) {
   };
 
   auto load_full_state = [&]() {
+    if (!game_loaded) {
+      return;
+    }
     std::vector<std::uint8_t> state;
     std::string load_error;
     if (!gbemu::common::read_file(state_path.string(), &state, &load_error)) {
@@ -1102,6 +1958,14 @@ int main(int argc, char** argv) {
     }
     std::cout << "Loaded state from " << state_path.string() << "\n";
   };
+
+  if (!launcher_enabled && !options.rom_path.empty()) {
+    std::string err;
+    if (!load_game(options.rom_path, &err)) {
+      std::cout << err << "\n";
+      return 1;
+    }
+  }
 
   if (options.headless) {
     for (int frame = 0; frame < options.headless_frames; ++frame) {
@@ -1131,9 +1995,12 @@ int main(int argc, char** argv) {
   const char* driver = SDL_GetCurrentVideoDriver();
   std::cout << "SDL video driver: " << (driver ? driver : "unknown") << "\n";
 
-  int fb_width = core.framebuffer_width();
-  int fb_height = core.framebuffer_height();
+  int fb_width = game_loaded ? core.framebuffer_width() : 240;
+  int fb_height = game_loaded ? core.framebuffer_height() : 160;
   int scale = options.scale_override.value_or(default_scale(system));
+  if (!game_loaded && !options.scale_override.has_value()) {
+    scale = 4;
+  }
 
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
@@ -1177,16 +2044,111 @@ int main(int argc, char** argv) {
 
   SDL_AudioSpec want = {};
   SDL_AudioSpec have = {};
-  want.freq = 48000;
-  want.format = AUDIO_S16SYS;
-  want.channels = 2;
-  want.samples = 512;
-  SDL_AudioDeviceID audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+  SDL_AudioDeviceID audio_device = 0;
+  bool audio_enabled = true;
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+    std::cout << "Failed to init audio subsystem: " << SDL_GetError() << "\n";
+    audio_enabled = false;
+  } else {
+    want.freq = 48000;
+    want.format = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples = 512;
+    audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+  }
   if (audio_device != 0) {
     SDL_PauseAudioDevice(audio_device, 0);
     std::cout << "Audio device opened at " << have.freq << " Hz\n";
   } else {
     std::cout << "Failed to open audio device: " << SDL_GetError() << "\n";
+    audio_enabled = false;
+  }
+  if (audio_pref.has_value()) {
+    if (audio_device == 0) {
+      audio_enabled = false;
+    } else {
+      audio_enabled = *audio_pref;
+      SDL_PauseAudioDevice(audio_device, audio_enabled ? 0 : 1);
+      if (!audio_enabled) {
+        SDL_ClearQueuedAudio(audio_device);
+      }
+    }
+  }
+
+#ifdef GBEMU_HAS_SDL_IMAGE
+  int img_flags = IMG_INIT_PNG | IMG_INIT_JPG;
+  int img_initted = IMG_Init(img_flags);
+  if ((img_initted & img_flags) != img_flags) {
+    std::cout << "SDL_image init failed: " << IMG_GetError() << "\n";
+  }
+#endif
+
+  std::unordered_map<std::string, CoverTexture> cover_cache;
+  auto get_cover_texture = [&](const std::string& path) -> CoverTexture* {
+    if (path.empty()) {
+      return nullptr;
+    }
+    auto it = cover_cache.find(path);
+    if (it != cover_cache.end()) {
+      return it->second.texture ? &it->second : nullptr;
+    }
+    CoverTexture entry;
+    SDL_Surface* surface = load_cover_surface(path);
+    if (!surface) {
+      cover_cache.emplace(path, entry);
+      return nullptr;
+    }
+    entry.texture = SDL_CreateTextureFromSurface(renderer, surface);
+    entry.width = surface->w;
+    entry.height = surface->h;
+    SDL_FreeSurface(surface);
+    cover_cache.emplace(path, entry);
+    return entry.texture ? &cover_cache[path] : nullptr;
+  };
+
+  SDL_GameControllerEventState(SDL_ENABLE);
+  std::unordered_map<SDL_JoystickID, SDL_GameController*> controllers;
+  auto open_controller = [&](int device_index) {
+    if (!SDL_IsGameController(device_index)) {
+      const char* name = SDL_JoystickNameForIndex(device_index);
+      if (name && *name) {
+        std::cout << "Joystick detected (not game controller): " << name << "\n";
+      }
+      return;
+    }
+    SDL_GameController* controller = SDL_GameControllerOpen(device_index);
+    if (!controller) {
+      std::cout << "Failed to open controller: " << SDL_GetError() << "\n";
+      return;
+    }
+    SDL_Joystick* joy = SDL_GameControllerGetJoystick(controller);
+    SDL_JoystickID instance_id = SDL_JoystickInstanceID(joy);
+    if (controllers.find(instance_id) != controllers.end()) {
+      SDL_GameControllerClose(controller);
+      return;
+    }
+    controllers[instance_id] = controller;
+    const char* name = SDL_GameControllerName(controller);
+    std::cout << "Controller connected: " << (name ? name : "unknown")
+              << " (id " << instance_id << ")\n";
+  };
+  auto close_controller = [&](SDL_JoystickID instance_id) {
+    auto it = controllers.find(instance_id);
+    if (it == controllers.end()) {
+      return;
+    }
+    const char* name = SDL_GameControllerName(it->second);
+    SDL_GameControllerClose(it->second);
+    controllers.erase(it);
+    std::cout << "Controller disconnected: " << (name ? name : "unknown")
+              << " (id " << instance_id << ")\n";
+  };
+  int controller_count = SDL_NumJoysticks();
+  for (int i = 0; i < controller_count; ++i) {
+    open_controller(i);
+  }
+  if (controllers.empty()) {
+    std::cout << "No controllers detected.\n";
   }
 
   std::cout << "Window created. Press ESC or close the window to exit.\n";
@@ -1197,30 +2159,359 @@ int main(int argc, char** argv) {
   const int sample_rate = (audio_device != 0) ? have.freq : 0;
   const std::size_t max_queue_bytes = static_cast<std::size_t>(sample_rate * 4 * 2);
 
-  bool running = true;
-  bool show_help = options.show_help_overlay;
-  std::uint8_t joypad_state = 0xFF;
-  long long frame_count = 0;
-  auto update_joypad = [&](SDL_Keycode key, bool pressed) -> bool {
-    auto set_bit = [&](int bit, bool down) {
-      std::uint8_t before = joypad_state;
-      if (down) {
-        joypad_state = static_cast<std::uint8_t>(joypad_state & ~(1u << bit));
-      } else {
-        joypad_state = static_cast<std::uint8_t>(joypad_state | (1u << bit));
-      }
-      return joypad_state != before;
-    };
+  auto reset_timing = [&]() {
+    target_fps = options.fps_override.value_or(core.target_fps());
+    pacer = FramePacer(target_fps);
+    audio_accum = 0.0;
+  };
 
-    if (input_config.resolve(gbemu::common::InputAction::A, key)) return set_bit(0, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::B, key)) return set_bit(1, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::Select, key)) return set_bit(2, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::Start, key)) return set_bit(3, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::Right, key)) return set_bit(4, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::Left, key)) return set_bit(5, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::Up, key)) return set_bit(6, pressed);
-    if (input_config.resolve(gbemu::common::InputAction::Down, key)) return set_bit(7, pressed);
+  auto recalc_video = [&]() {
+    int desired_scale = options.scale_override.value_or(default_scale(system));
+    if (!game_loaded && !options.scale_override.has_value()) {
+      desired_scale = 4;
+    }
+    scale = desired_scale;
+    fb_width = game_loaded ? core.framebuffer_width() : 240;
+    fb_height = game_loaded ? core.framebuffer_height() : 160;
+    if (window) {
+      SDL_SetWindowSize(window, fb_width * scale, fb_height * scale);
+    }
+    if (renderer) {
+      if (texture) {
+        SDL_DestroyTexture(texture);
+      }
+      texture = SDL_CreateTexture(renderer,
+                                  SDL_PIXELFORMAT_ARGB8888,
+                                  SDL_TEXTUREACCESS_STREAMING,
+                                  fb_width,
+                                  fb_height);
+    }
+  };
+
+  bool running = true;
+  bool show_help = show_help_pref;
+  UiMode ui_mode = launcher_enabled ? UiMode::Launcher : UiMode::Hidden;
+  long long frame_count = 0;
+  std::vector<RomEntry> roms;
+  std::vector<int> launcher_list;
+  int launcher_index = 0;
+  int launcher_scroll = 0;
+  int menu_index = 0;
+  int settings_index = 0;
+  LauncherFilter launcher_filter = LauncherFilter::All;
+  std::string launcher_search;
+  bool search_focus = false;
+  bool text_input_active = false;
+  UiMode last_mode = ui_mode;
+  int input_map_index = 0;
+  bool rebind_active = false;
+  gbemu::common::InputAction rebind_action = gbemu::common::InputAction::A;
+  const std::vector<gbemu::common::InputAction> map_actions = {
+      gbemu::common::InputAction::A,
+      gbemu::common::InputAction::B,
+      gbemu::common::InputAction::Select,
+      gbemu::common::InputAction::Start,
+      gbemu::common::InputAction::Up,
+      gbemu::common::InputAction::Down,
+      gbemu::common::InputAction::Left,
+      gbemu::common::InputAction::Right,
+  };
+  int launcher_visible = 8;
+
+  auto build_launcher_list = [&]() {
+    launcher_list.clear();
+    if (launcher_filter == LauncherFilter::Recents) {
+      for (const auto& path : recent_paths) {
+        for (std::size_t i = 0; i < roms.size(); ++i) {
+          if (roms[i].path == path && matches_search(roms[i], launcher_search)) {
+            launcher_list.push_back(static_cast<int>(i));
+            break;
+          }
+        }
+      }
+    } else if (launcher_filter == LauncherFilter::Favorites) {
+      for (std::size_t i = 0; i < roms.size(); ++i) {
+        if (favorite_paths.count(roms[i].path) && matches_search(roms[i], launcher_search)) {
+          launcher_list.push_back(static_cast<int>(i));
+        }
+      }
+    } else {
+      for (std::size_t i = 0; i < roms.size(); ++i) {
+        if (matches_search(roms[i], launcher_search)) {
+          launcher_list.push_back(static_cast<int>(i));
+        }
+      }
+    }
+  };
+
+  auto normalize_launcher = [&]() {
+    if (launcher_list.empty()) {
+      launcher_index = 0;
+      launcher_scroll = 0;
+      return;
+    }
+    launcher_index = std::clamp(launcher_index, 0, static_cast<int>(launcher_list.size()) - 1);
+    launcher_scroll = std::min(launcher_scroll, launcher_index);
+  };
+
+  auto selected_rom_index = [&]() -> int {
+    if (launcher_list.empty()) {
+      return -1;
+    }
+    if (launcher_index < 0 || launcher_index >= static_cast<int>(launcher_list.size())) {
+      return -1;
+    }
+    return launcher_list[launcher_index];
+  };
+
+  auto select_launcher_rom = [&](int rom_index) {
+    if (launcher_list.empty()) {
+      launcher_index = 0;
+      launcher_scroll = 0;
+      return;
+    }
+    if (rom_index >= 0) {
+      for (std::size_t i = 0; i < launcher_list.size(); ++i) {
+        if (launcher_list[i] == rom_index) {
+          launcher_index = static_cast<int>(i);
+          break;
+        }
+      }
+    }
+    normalize_launcher();
+  };
+
+  auto refresh_roms = [&]() {
+    launcher_error.clear();
+    std::string selected_path;
+    if (!launcher_list.empty() && launcher_index >= 0 &&
+        launcher_index < static_cast<int>(launcher_list.size())) {
+      selected_path = roms[launcher_list[launcher_index]].path;
+    }
+    std::vector<std::filesystem::path> roots;
+    if (!options.rom_dirs.empty()) {
+      for (const auto& dir : options.rom_dirs) {
+        roots.emplace_back(dir);
+      }
+    } else {
+      if (std::filesystem::exists("Test-Games")) {
+        roots.emplace_back("Test-Games");
+      }
+      if (std::filesystem::exists("roms")) {
+        roots.emplace_back("roms");
+      }
+    }
+    if (!options.rom_path.empty()) {
+      std::filesystem::path parent = std::filesystem::path(options.rom_path).parent_path();
+      if (!parent.empty()) {
+        roots.push_back(parent);
+      }
+    }
+    roms = scan_roms(roots);
+
+    if (!options.rom_path.empty()) {
+      bool found = false;
+      for (const auto& entry : roms) {
+        if (entry.path == options.rom_path) {
+          found = true;
+          break;
+        }
+      }
+      if (!found && std::filesystem::exists(options.rom_path)) {
+        RomEntry entry;
+        entry.path = options.rom_path;
+        entry.size = std::filesystem::file_size(options.rom_path);
+        entry.modified = std::filesystem::last_write_time(options.rom_path);
+        std::vector<std::uint8_t> data;
+        std::string error;
+        if (gbemu::common::read_file(entry.path, &data, &error)) {
+          entry.system = detect_system(data);
+          entry.title = rom_title_from_data(data, entry.system);
+        }
+        if (entry.title.empty()) {
+          entry.title = std::filesystem::path(entry.path).stem().string();
+        }
+        entry.cover_path = find_cover_path(entry.path);
+        roms.insert(roms.begin(), entry);
+      }
+    }
+
+    int selected_rom = -1;
+    if (!selected_path.empty()) {
+      for (std::size_t i = 0; i < roms.size(); ++i) {
+        if (roms[i].path == selected_path) {
+          selected_rom = static_cast<int>(i);
+          break;
+        }
+      }
+    } else if (!options.rom_path.empty()) {
+      for (std::size_t i = 0; i < roms.size(); ++i) {
+        if (roms[i].path == options.rom_path) {
+          selected_rom = static_cast<int>(i);
+          break;
+        }
+      }
+    }
+    launcher_index = 0;
+    launcher_scroll = 0;
+    build_launcher_list();
+    select_launcher_rom(selected_rom);
+  };
+
+  if (launcher_enabled) {
+    refresh_roms();
+  }
+  auto action_to_bit = [](gbemu::common::InputAction action) -> int {
+    switch (action) {
+      case gbemu::common::InputAction::A: return 0;
+      case gbemu::common::InputAction::B: return 1;
+      case gbemu::common::InputAction::Select: return 2;
+      case gbemu::common::InputAction::Start: return 3;
+      case gbemu::common::InputAction::Right: return 4;
+      case gbemu::common::InputAction::Left: return 5;
+      case gbemu::common::InputAction::Up: return 6;
+      case gbemu::common::InputAction::Down: return 7;
+      default: return -1;
+    }
+  };
+  auto set_bit = [&](std::uint8_t& state, int bit, bool down) {
+    if (bit < 0) {
+      return false;
+    }
+    std::uint8_t before = state;
+    if (down) {
+      state = static_cast<std::uint8_t>(state & ~(1u << bit));
+    } else {
+      state = static_cast<std::uint8_t>(state | (1u << bit));
+    }
+    return state != before;
+  };
+
+  auto update_joypad_key = [&](SDL_Keycode key, bool pressed) -> bool {
+    if (input_config.resolve(gbemu::common::InputAction::A, key)) return set_bit(key_state, 0, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::B, key)) return set_bit(key_state, 1, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Select, key)) return set_bit(key_state, 2, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Start, key)) return set_bit(key_state, 3, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Right, key)) return set_bit(key_state, 4, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Left, key)) return set_bit(key_state, 5, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Up, key)) return set_bit(key_state, 6, pressed);
+    if (input_config.resolve(gbemu::common::InputAction::Down, key)) return set_bit(key_state, 7, pressed);
     return false;
+  };
+
+  auto update_joypad_button = [&](SDL_GameControllerButton button, bool pressed) -> bool {
+    auto action = input_config.action_for_controller_button(static_cast<int>(button));
+    if (!action.has_value()) {
+      return false;
+    }
+    return set_bit(pad_state, action_to_bit(*action), pressed);
+  };
+
+  auto update_joypad_axis = [&](SDL_GameControllerAxis axis, int value) -> bool {
+    bool changed = false;
+    int deadzone = input_config.axis_deadzone();
+    bool pos = value > deadzone;
+    bool neg = value < -deadzone;
+    if (auto action = input_config.action_for_controller_axis_pos(static_cast<int>(axis))) {
+      changed |= set_bit(pad_state, action_to_bit(*action), pos);
+    }
+    if (auto action = input_config.action_for_controller_axis_neg(static_cast<int>(axis))) {
+      changed |= set_bit(pad_state, action_to_bit(*action), neg);
+    }
+    if (!pos && !neg) {
+      if (auto action = input_config.action_for_controller_axis_pos(static_cast<int>(axis))) {
+        changed |= set_bit(pad_state, action_to_bit(*action), false);
+      }
+      if (auto action = input_config.action_for_controller_axis_neg(static_cast<int>(axis))) {
+        changed |= set_bit(pad_state, action_to_bit(*action), false);
+      }
+    }
+    return changed;
+  };
+
+  auto poll_controller_state = [&]() -> std::uint8_t {
+    if (controllers.empty()) {
+      return 0xFF;
+    }
+    SDL_GameControllerUpdate();
+    std::uint8_t state = 0xFF;
+    const gbemu::common::InputAction actions[] = {
+        gbemu::common::InputAction::A,
+        gbemu::common::InputAction::B,
+        gbemu::common::InputAction::Select,
+        gbemu::common::InputAction::Start,
+        gbemu::common::InputAction::Right,
+        gbemu::common::InputAction::Left,
+        gbemu::common::InputAction::Up,
+        gbemu::common::InputAction::Down,
+    };
+    for (auto action : actions) {
+      bool down = false;
+      if (auto button = input_config.controller_button_for_action(action)) {
+        for (const auto& entry : controllers) {
+          if (SDL_GameControllerGetButton(entry.second,
+                                          static_cast<SDL_GameControllerButton>(*button)) != 0) {
+            down = true;
+            break;
+          }
+        }
+      }
+      if (!down) {
+        if (auto axis = input_config.controller_axis_for_action(action)) {
+          int deadzone = input_config.axis_deadzone();
+          for (const auto& entry : controllers) {
+            int value = SDL_GameControllerGetAxis(entry.second,
+                                                  static_cast<SDL_GameControllerAxis>(axis->first));
+            if (axis->second ? (value > deadzone) : (value < -deadzone)) {
+              down = true;
+              break;
+            }
+          }
+        }
+      }
+      int bit = action_to_bit(action);
+      if (down && bit >= 0) {
+        state = static_cast<std::uint8_t>(state & ~(1u << bit));
+      }
+    }
+    return state;
+  };
+
+  auto poll_keyboard_state = [&]() -> std::uint8_t {
+    SDL_PumpEvents();
+    int count = 0;
+    const Uint8* keys = SDL_GetKeyboardState(&count);
+    if (!keys || count <= 0) {
+      return 0xFF;
+    }
+    std::uint8_t state = 0xFF;
+    const gbemu::common::InputAction actions[] = {
+        gbemu::common::InputAction::A,
+        gbemu::common::InputAction::B,
+        gbemu::common::InputAction::Select,
+        gbemu::common::InputAction::Start,
+        gbemu::common::InputAction::Right,
+        gbemu::common::InputAction::Left,
+        gbemu::common::InputAction::Up,
+        gbemu::common::InputAction::Down,
+    };
+    for (auto action : actions) {
+      int keycode = input_config.key_for(action);
+      if (keycode <= 0) {
+        continue;
+      }
+      SDL_Scancode sc = SDL_GetScancodeFromKey(static_cast<SDL_Keycode>(keycode));
+      if (sc == SDL_SCANCODE_UNKNOWN) {
+        continue;
+      }
+      if (static_cast<int>(sc) < count && keys[sc]) {
+        int bit = action_to_bit(action);
+        if (bit >= 0) {
+          state = static_cast<std::uint8_t>(state & ~(1u << bit));
+        }
+      }
+    }
+    return state;
   };
 
   auto build_help_text = [&]() {
@@ -1229,6 +2520,13 @@ int main(int argc, char** argv) {
     text += "F1 WINDOW OVERLAY\n";
     text += "F2 CGB COLOR\n";
     text += "F3 TOGGLE HELP\n";
+    text += "F6 CYCLE THEME\n";
+    text += "F10 MENU\n";
+    text += "F7 LAUNCHER\n";
+    text += "/ SEARCH\n";
+    text += "TAB FILTER\n";
+    text += "F FAVORITE\n";
+    text += "S SETTINGS\n";
     text += "F5 SAVE STATE\n";
     text += "F9 LOAD STATE\n";
     text += "A: " + key_label(input_config.key_for(gbemu::common::InputAction::A));
@@ -1241,8 +2539,268 @@ int main(int argc, char** argv) {
     text += " RIGHT: " + key_label(input_config.key_for(gbemu::common::InputAction::Right)) + "\n";
     return text;
   };
-  bool debug_window_overlay = options.debug_window_overlay;
-  bool cgb_color_correction = options.cgb_color_correction;
+  auto set_theme = [&](UiTheme theme) {
+    ui_theme = theme;
+    theme_toast_frames = 180;
+    std::cout << "UI theme: " << ui_theme_name(ui_theme) << "\n";
+  };
+
+  auto menu_labels = [&]() {
+    std::vector<std::string> labels;
+    labels.emplace_back("RESUME");
+    labels.emplace_back("SAVE STATE");
+    labels.emplace_back("LOAD STATE");
+    labels.emplace_back(std::string("HELP: ") + (show_help ? "ON" : "OFF"));
+    labels.emplace_back(std::string("WINDOW OVERLAY: ") + (debug_window_overlay ? "ON" : "OFF"));
+    labels.emplace_back(std::string("CGB COLOR: ") + (cgb_color_correction ? "ON" : "OFF"));
+    labels.emplace_back(std::string("THEME: ") + upper_ascii(ui_theme_name(ui_theme)));
+    labels.emplace_back("SETTINGS");
+    labels.emplace_back("LAUNCHER");
+    labels.emplace_back("QUIT");
+    return labels;
+  };
+
+  auto apply_menu_action = [&](int index) {
+    switch (index) {
+      case 0:
+        ui_mode = UiMode::Hidden;
+        break;
+      case 1:
+        save_full_state();
+        break;
+      case 2:
+        load_full_state();
+        break;
+      case 3:
+        show_help = !show_help;
+        break;
+      case 4:
+        debug_window_overlay = !debug_window_overlay;
+        core.set_debug_window_overlay(debug_window_overlay);
+        break;
+      case 5:
+        cgb_color_correction = !cgb_color_correction;
+        core.set_cgb_color_correction(cgb_color_correction);
+        break;
+      case 6:
+        set_theme(next_theme(ui_theme, 1));
+        break;
+      case 7:
+        ui_mode = UiMode::Settings;
+        settings_index = 0;
+        break;
+      case 8:
+        if (launcher_enabled) {
+          ui_mode = UiMode::Launcher;
+          refresh_roms();
+        }
+        break;
+      case 9:
+        running = false;
+        break;
+      default:
+        break;
+    }
+  };
+
+  auto settings_labels = [&]() {
+    std::vector<std::string> labels;
+    labels.emplace_back(std::string("THEME: ") + upper_ascii(ui_theme_name(ui_theme)));
+    labels.emplace_back(std::string("SCALE: ") + std::to_string(scale));
+    double fps_value = options.fps_override.value_or(core.target_fps());
+    std::string fps_label = "FPS: ";
+    if (fps_value <= 0.0) {
+      fps_label += "UNLIMITED";
+    } else {
+      std::ostringstream ss;
+      if (std::fabs(fps_value - std::round(fps_value)) < 0.05) {
+        ss << static_cast<int>(std::round(fps_value));
+      } else {
+        ss << std::fixed << std::setprecision(1) << fps_value;
+      }
+      fps_label += ss.str();
+    }
+    labels.emplace_back(fps_label);
+    if (audio_device == 0) {
+      labels.emplace_back("AUDIO: UNAVAILABLE");
+    } else {
+      labels.emplace_back(std::string("AUDIO: ") + (audio_enabled ? "ON" : "OFF"));
+    }
+    labels.emplace_back(std::string("DEADZONE: ") + std::to_string(input_config.axis_deadzone()));
+    labels.emplace_back("INPUT MAP");
+    labels.emplace_back(std::string("HELP: ") + (show_help ? "ON" : "OFF"));
+    labels.emplace_back("BACK");
+    return labels;
+  };
+
+  auto apply_settings_action = [&](int index) {
+    switch (index) {
+      case 0:
+        set_theme(next_theme(ui_theme, 1));
+        break;
+      case 3:
+        if (audio_device != 0) {
+          audio_enabled = !audio_enabled;
+          SDL_PauseAudioDevice(audio_device, audio_enabled ? 0 : 1);
+          if (!audio_enabled) {
+            SDL_ClearQueuedAudio(audio_device);
+          }
+        }
+        break;
+      case 5:
+        ui_mode = UiMode::InputMap;
+        input_map_index = 0;
+        rebind_active = false;
+        break;
+      case 6:
+        show_help = !show_help;
+        break;
+      case 7:
+        ui_mode = UiMode::Menu;
+        break;
+      default:
+        break;
+    }
+  };
+
+  auto move_settings = [&](int delta) {
+    auto labels = settings_labels();
+    if (labels.empty()) {
+      return;
+    }
+    int count = static_cast<int>(labels.size());
+    settings_index = (settings_index + delta + count) % count;
+  };
+
+  auto adjust_settings = [&](int index, int delta) {
+    switch (index) {
+      case 0:
+        set_theme(next_theme(ui_theme, delta >= 0 ? 1 : -1));
+        break;
+      case 1: {
+        int next_scale = std::clamp(scale + delta, 1, 8);
+        if (next_scale != scale) {
+          options.scale_override = next_scale;
+          recalc_video();
+        }
+      } break;
+      case 2: {
+        double step = 5.0;
+        double next_fps = options.fps_override.value_or(core.target_fps());
+        next_fps = std::max(0.0, next_fps + step * delta);
+        options.fps_override = next_fps;
+        reset_timing();
+      } break;
+      case 3:
+        if (audio_device != 0) {
+          audio_enabled = !audio_enabled;
+          SDL_PauseAudioDevice(audio_device, audio_enabled ? 0 : 1);
+          if (!audio_enabled) {
+            SDL_ClearQueuedAudio(audio_device);
+          }
+        }
+        break;
+      case 4: {
+        int next_deadzone = std::clamp(input_config.axis_deadzone() + delta * 1000, 0, 32000);
+        input_config.set_axis_deadzone(next_deadzone);
+        save_input_map();
+      } break;
+      case 6:
+        show_help = !show_help;
+        break;
+      default:
+        break;
+    }
+  };
+
+  auto move_menu = [&](int delta) {
+    auto labels = menu_labels();
+    if (labels.empty()) {
+      return;
+    }
+    int count = static_cast<int>(labels.size());
+    menu_index = (menu_index + delta + count) % count;
+  };
+
+  auto move_launcher = [&](int delta) {
+    if (launcher_list.empty()) {
+      return;
+    }
+    int count = static_cast<int>(launcher_list.size());
+    launcher_index = std::clamp(launcher_index + delta, 0, count - 1);
+    int visible = std::max(1, launcher_visible);
+    if (launcher_index < launcher_scroll) {
+      launcher_scroll = launcher_index;
+    } else if (launcher_index >= launcher_scroll + visible) {
+      launcher_scroll = launcher_index - visible + 1;
+    }
+  };
+
+  auto launch_selected = [&]() {
+    if (launcher_list.empty()) {
+      return;
+    }
+    std::string err;
+    int selected = launcher_list[launcher_index];
+    if (!load_game(roms[selected].path, &err)) {
+      launcher_error = err;
+      return;
+    }
+    launcher_error.clear();
+    reset_timing();
+    recalc_video();
+    if (audio_device != 0) {
+      SDL_ClearQueuedAudio(audio_device);
+    }
+    ui_mode = UiMode::Hidden;
+  };
+
+  auto cycle_launcher_filter = [&](int delta) {
+    int selected = selected_rom_index();
+    launcher_filter = next_launcher_filter(launcher_filter, delta);
+    build_launcher_list();
+    select_launcher_rom(selected);
+  };
+
+  auto toggle_favorite = [&]() {
+    int selected = selected_rom_index();
+    if (selected < 0 || selected >= static_cast<int>(roms.size())) {
+      return;
+    }
+    const std::string& path = roms[selected].path;
+    if (favorite_paths.count(path)) {
+      favorite_paths.erase(path);
+    } else {
+      favorite_paths.insert(path);
+    }
+    save_launcher_state(launcher_state_path.string(), recent_paths, favorite_paths);
+    build_launcher_list();
+    select_launcher_rom(selected);
+  };
+
+  auto update_text_input = [&]() {
+    bool want = (ui_mode == UiMode::Launcher);
+    if (want && !text_input_active) {
+      SDL_StartTextInput();
+      text_input_active = true;
+    } else if (!want && text_input_active) {
+      SDL_StopTextInput();
+      text_input_active = false;
+      search_focus = false;
+    }
+  };
+
+  auto clear_search = [&]() {
+    if (!launcher_search.empty()) {
+      int selected = selected_rom_index();
+      launcher_search.clear();
+      build_launcher_list();
+      select_launcher_rom(selected);
+    }
+  };
+
+  update_text_input();
+
   while (running) {
     if (core.cpu_faulted()) {
       dump_cpu_fault();
@@ -1250,50 +2808,658 @@ int main(int argc, char** argv) {
       break;
     }
 
+    int window_w = fb_width * scale;
+    int window_h = fb_height * scale;
+    if (window) {
+      SDL_GetWindowSize(window, &window_w, &window_h);
+    }
+
+    auto menu_panel_rect = [&]() {
+      int panel_width = window_w > 520 ? 520 : window_w - 20;
+      int panel_height = std::min(360, window_h - 40);
+      return SDL_Rect{
+          (window_w - panel_width) / 2,
+          (window_h - panel_height) / 2,
+          panel_width,
+          panel_height
+      };
+    };
+
+    auto settings_panel_rect = [&]() {
+      int panel_width = window_w > 560 ? 560 : window_w - 20;
+      int panel_height = std::min(380, window_h - 40);
+      return SDL_Rect{
+          (window_w - panel_width) / 2,
+          (window_h - panel_height) / 2,
+          panel_width,
+          panel_height
+      };
+    };
+
+    auto input_map_panel_rect = [&]() {
+      int panel_width = window_w > 620 ? 620 : window_w - 20;
+      int panel_height = std::min(420, window_h - 40);
+      return SDL_Rect{
+          (window_w - panel_width) / 2,
+          (window_h - panel_height) / 2,
+          panel_width,
+          panel_height
+      };
+    };
+
+    auto launcher_layout = [&]() {
+      LauncherLayout layout;
+      layout.header = SDL_Rect{0, 0, window_w, 44};
+      int search_box_w = std::min(260, window_w / 3);
+      int search_box_h = 22;
+      int search_box_x = (window_w - search_box_w) / 2;
+      int search_box_y = layout.header.y + 11;
+      layout.search_box = SDL_Rect{search_box_x, search_box_y, search_box_w, search_box_h};
+
+      std::string title = "GBEMU LAUNCHER";
+      int title_w = text_width(title, 2);
+      int settings_w = text_width("SETTINGS", 2) + 12;
+      layout.settings_button = SDL_Rect{14 + title_w + 12, 9, settings_w, 24};
+
+      std::string filter_label = "FILTER: " + upper_ascii(launcher_filter_name(launcher_filter));
+      int filter_w = text_width(filter_label, 2);
+      layout.filter_hit = SDL_Rect{window_w - 14 - filter_w, 20, filter_w, 14};
+
+      int margin = 16;
+      int top = layout.header.h + 8;
+      int list_w = (window_w * 2) / 3;
+      int detail_w = window_w - list_w - margin * 3;
+      layout.list_panel = SDL_Rect{margin, top, list_w, window_h - top - margin};
+      layout.detail_panel = SDL_Rect{layout.list_panel.x + layout.list_panel.w + margin,
+                                     top, detail_w, layout.list_panel.h};
+      layout.card_h = 38;
+      layout.visible = std::max(1, (layout.list_panel.h - 16) / layout.card_h);
+      layout.start_y = layout.list_panel.y + 8;
+
+      int button_h = 24;
+      int button_w = (layout.detail_panel.w - 30) / 2;
+      int button_y = layout.detail_panel.y + layout.detail_panel.h - 60;
+      layout.play_button = SDL_Rect{layout.detail_panel.x + 10, button_y, button_w, button_h};
+      layout.favorite_button = SDL_Rect{layout.play_button.x + button_w + 10, button_y,
+                                        button_w, button_h};
+      return layout;
+    };
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) {
         running = false;
-      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
-        running = false;
-      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F1) {
-        debug_window_overlay = !debug_window_overlay;
-        core.set_debug_window_overlay(debug_window_overlay);
-        std::cout << "Debug window overlay: " << (debug_window_overlay ? "ON" : "OFF") << "\n";
-      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F2) {
-        cgb_color_correction = !cgb_color_correction;
-        core.set_cgb_color_correction(cgb_color_correction);
-        std::cout << "CGB color correction: " << (cgb_color_correction ? "ON" : "OFF") << "\n";
-      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F3) {
-        show_help = !show_help;
-        std::cout << "Help overlay: " << (show_help ? "ON" : "OFF") << "\n";
-      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F5) {
-        save_full_state();
-      } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F9) {
-        load_full_state();
+        continue;
+      } else if (event.type == SDL_CONTROLLERDEVICEADDED) {
+        open_controller(event.cdevice.which);
+        continue;
+      } else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
+        close_controller(event.cdevice.which);
+        continue;
       } else if (event.type == SDL_KEYDOWN) {
-        if (update_joypad(event.key.keysym.sym, true)) {
-          core.set_joypad_state(joypad_state);
-          core.request_interrupt(4);
+        SDL_Keycode key = event.key.keysym.sym;
+        if (key == SDLK_ESCAPE) {
+          if (ui_mode == UiMode::Launcher && search_focus) {
+            if (!launcher_search.empty()) {
+              clear_search();
+            } else {
+              search_focus = false;
+            }
+            continue;
+          }
+          if (ui_mode == UiMode::Menu) {
+            ui_mode = UiMode::Hidden;
+          } else if (ui_mode == UiMode::Settings) {
+            ui_mode = UiMode::Menu;
+          } else if (ui_mode == UiMode::InputMap) {
+            if (rebind_active) {
+              rebind_active = false;
+            } else {
+              ui_mode = UiMode::Settings;
+            }
+          } else if (ui_mode == UiMode::Launcher) {
+            if (game_loaded) {
+              ui_mode = UiMode::Hidden;
+            } else {
+              running = false;
+            }
+          } else {
+            running = false;
+          }
+          continue;
+        }
+        if (key == SDLK_F10) {
+          if (ui_mode == UiMode::Menu) {
+            ui_mode = UiMode::Hidden;
+          } else if (ui_mode == UiMode::Settings) {
+            ui_mode = UiMode::Menu;
+          } else if (ui_mode == UiMode::InputMap) {
+            ui_mode = UiMode::Settings;
+          } else if (ui_mode == UiMode::Hidden && game_loaded) {
+            ui_mode = UiMode::Menu;
+            menu_index = 0;
+          }
+          continue;
+        }
+        if (key == SDLK_F6) {
+          set_theme(next_theme(ui_theme, 1));
+          continue;
+        }
+        if (key == SDLK_F7) {
+          if (launcher_enabled) {
+            ui_mode = UiMode::Launcher;
+            refresh_roms();
+          }
+          continue;
+        }
+        if (key == SDLK_F1) {
+          debug_window_overlay = !debug_window_overlay;
+          core.set_debug_window_overlay(debug_window_overlay);
+          std::cout << "Debug window overlay: " << (debug_window_overlay ? "ON" : "OFF") << "\n";
+          continue;
+        }
+        if (key == SDLK_F2) {
+          cgb_color_correction = !cgb_color_correction;
+          core.set_cgb_color_correction(cgb_color_correction);
+          std::cout << "CGB color correction: " << (cgb_color_correction ? "ON" : "OFF") << "\n";
+          continue;
+        }
+        if (key == SDLK_F3) {
+          show_help = !show_help;
+          std::cout << "Help overlay: " << (show_help ? "ON" : "OFF") << "\n";
+          continue;
+        }
+        if (key == SDLK_F5) {
+          save_full_state();
+          continue;
+        }
+        if (key == SDLK_F9) {
+          load_full_state();
+          continue;
+        }
+
+        if (ui_mode == UiMode::Menu) {
+          if (key == SDLK_UP) {
+            move_menu(-1);
+          } else if (key == SDLK_DOWN) {
+            move_menu(1);
+          } else if (key == SDLK_LEFT) {
+            set_theme(next_theme(ui_theme, -1));
+          } else if (key == SDLK_RIGHT) {
+            set_theme(next_theme(ui_theme, 1));
+          } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+            apply_menu_action(menu_index);
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Settings) {
+          if (key == SDLK_UP) {
+            move_settings(-1);
+          } else if (key == SDLK_DOWN) {
+            move_settings(1);
+          } else if (key == SDLK_LEFT) {
+            adjust_settings(settings_index, -1);
+          } else if (key == SDLK_RIGHT) {
+            adjust_settings(settings_index, 1);
+          } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+            apply_settings_action(settings_index);
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::InputMap) {
+          if (rebind_active) {
+            if (key == SDLK_ESCAPE) {
+              rebind_active = false;
+              continue;
+            }
+            input_config.set_key_binding(rebind_action, static_cast<int>(key));
+            save_input_map();
+            rebind_active = false;
+          } else {
+            if (key == SDLK_UP) {
+              input_map_index = (input_map_index - 1 + static_cast<int>(map_actions.size()))
+                                % static_cast<int>(map_actions.size());
+            } else if (key == SDLK_DOWN) {
+              input_map_index = (input_map_index + 1)
+                                % static_cast<int>(map_actions.size());
+            } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+              rebind_action = map_actions[static_cast<std::size_t>(input_map_index)];
+              rebind_active = true;
+            } else if (key == SDLK_DELETE) {
+              input_config.clear_controller_binding(
+                  map_actions[static_cast<std::size_t>(input_map_index)]);
+              save_input_map();
+            } else if (key == SDLK_BACKSPACE) {
+              input_config.set_key_binding(
+                  map_actions[static_cast<std::size_t>(input_map_index)], 0);
+              save_input_map();
+            }
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Launcher) {
+          if (key == SDLK_UP) {
+            move_launcher(-1);
+          } else if (key == SDLK_DOWN) {
+            move_launcher(1);
+          } else if (key == SDLK_SLASH || (key == SDLK_f && (event.key.keysym.mod & KMOD_CTRL))) {
+            search_focus = true;
+          } else if (key == SDLK_LEFT) {
+            set_theme(next_theme(ui_theme, -1));
+          } else if (key == SDLK_RIGHT) {
+            set_theme(next_theme(ui_theme, 1));
+          } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+            launch_selected();
+          } else if (key == SDLK_TAB) {
+            cycle_launcher_filter(1);
+          } else if (key == SDLK_BACKSPACE && search_focus) {
+            if (!launcher_search.empty()) {
+              int selected = selected_rom_index();
+              launcher_search.pop_back();
+              build_launcher_list();
+              select_launcher_rom(selected);
+            }
+          } else if (key == SDLK_s && !search_focus) {
+            ui_mode = UiMode::Settings;
+            settings_index = 0;
+          } else if (key == SDLK_f && !search_focus) {
+            toggle_favorite();
+          } else if (key == SDLK_r && !search_focus) {
+            refresh_roms();
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Hidden) {
+          if (update_joypad_key(key, true)) {
+            std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
+            if (combined != joypad_state) {
+              joypad_state = combined;
+              core.set_joypad_state(joypad_state);
+              core.request_interrupt(4);
+            }
+          }
         }
       } else if (event.type == SDL_KEYUP) {
-        if (update_joypad(event.key.keysym.sym, false)) {
-          core.set_joypad_state(joypad_state);
-          core.request_interrupt(4);
+        if (ui_mode == UiMode::Hidden) {
+          if (update_joypad_key(event.key.keysym.sym, false)) {
+            std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
+            if (combined != joypad_state) {
+              joypad_state = combined;
+              core.set_joypad_state(joypad_state);
+              core.request_interrupt(4);
+            }
+          }
+        }
+      } else if (event.type == SDL_TEXTINPUT) {
+        if (ui_mode == UiMode::Launcher && search_focus) {
+          int selected = selected_rom_index();
+          constexpr std::size_t kMaxSearch = 32;
+          const char* text = event.text.text;
+          if (text) {
+            for (const char* p = text; *p != '\0'; ++p) {
+              unsigned char c = static_cast<unsigned char>(*p);
+              if (c >= 32 && c < 127 && launcher_search.size() < kMaxSearch) {
+                launcher_search.push_back(static_cast<char>(c));
+              }
+            }
+          }
+          build_launcher_list();
+          select_launcher_rom(selected);
+        }
+      } else if (event.type == SDL_MOUSEMOTION) {
+        int mx = event.motion.x;
+        int my = event.motion.y;
+        const UiThemeDef& theme_local = theme_def(ui_theme);
+        if (ui_mode == UiMode::Menu) {
+          auto labels = menu_labels();
+          SDL_Rect panel = menu_panel_rect();
+          int item_y = panel.y + theme_local.panel_padding;
+          int line_h = 18;
+          for (std::size_t i = 0; i < labels.size(); ++i) {
+            SDL_Rect row{panel.x + theme_local.panel_padding, item_y - 2,
+                         panel.w - theme_local.panel_padding * 2, line_h};
+            if (point_in_rect(mx, my, row)) {
+              menu_index = static_cast<int>(i);
+              break;
+            }
+            item_y += line_h + 6;
+          }
+        } else if (ui_mode == UiMode::Settings) {
+          auto labels = settings_labels();
+          SDL_Rect panel = settings_panel_rect();
+          int item_y = panel.y + theme_local.panel_padding;
+          int line_h = 18;
+          for (std::size_t i = 0; i < labels.size(); ++i) {
+            SDL_Rect row{panel.x + theme_local.panel_padding, item_y - 2,
+                         panel.w - theme_local.panel_padding * 2, line_h};
+            if (point_in_rect(mx, my, row)) {
+              settings_index = static_cast<int>(i);
+              break;
+            }
+            item_y += line_h + 6;
+          }
+        } else if (ui_mode == UiMode::InputMap) {
+          SDL_Rect panel = input_map_panel_rect();
+          int item_y = panel.y + theme_local.panel_padding + 18;
+          int line_h = 18;
+          for (std::size_t i = 0; i < map_actions.size(); ++i) {
+            SDL_Rect row{panel.x + theme_local.panel_padding, item_y - 2,
+                         panel.w - theme_local.panel_padding * 2, line_h};
+            if (point_in_rect(mx, my, row)) {
+              input_map_index = static_cast<int>(i);
+              break;
+            }
+            item_y += line_h + 6;
+          }
+        } else if (ui_mode == UiMode::Launcher) {
+          LauncherLayout layout = launcher_layout();
+          launcher_visible = layout.visible;
+          if (point_in_rect(mx, my, layout.list_panel)) {
+            int rel_y = my - layout.start_y;
+            if (rel_y >= 0) {
+              int idx = rel_y / layout.card_h + launcher_scroll;
+              if (idx >= 0 && idx < static_cast<int>(launcher_list.size())) {
+                launcher_index = idx;
+              }
+            }
+          }
+        }
+      } else if (event.type == SDL_MOUSEWHEEL) {
+        if (ui_mode == UiMode::Launcher) {
+          move_launcher(-event.wheel.y);
+        } else if (ui_mode == UiMode::Menu) {
+          move_menu(-event.wheel.y);
+        } else if (ui_mode == UiMode::Settings) {
+          move_settings(-event.wheel.y);
+        } else if (ui_mode == UiMode::InputMap) {
+          input_map_index = (input_map_index - event.wheel.y +
+                             static_cast<int>(map_actions.size()))
+                            % static_cast<int>(map_actions.size());
+        }
+      } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          int mx = event.button.x;
+          int my = event.button.y;
+          const UiThemeDef& theme_local = theme_def(ui_theme);
+          if (ui_mode == UiMode::Menu) {
+            auto labels = menu_labels();
+            SDL_Rect panel = menu_panel_rect();
+            int item_y = panel.y + theme_local.panel_padding;
+            int line_h = 18;
+            for (std::size_t i = 0; i < labels.size(); ++i) {
+              SDL_Rect row{panel.x + theme_local.panel_padding, item_y - 2,
+                           panel.w - theme_local.panel_padding * 2, line_h};
+              if (point_in_rect(mx, my, row)) {
+                menu_index = static_cast<int>(i);
+                apply_menu_action(menu_index);
+                break;
+              }
+              item_y += line_h + 6;
+            }
+          } else if (ui_mode == UiMode::Settings) {
+            auto labels = settings_labels();
+            SDL_Rect panel = settings_panel_rect();
+            int item_y = panel.y + theme_local.panel_padding;
+            int line_h = 18;
+            for (std::size_t i = 0; i < labels.size(); ++i) {
+              SDL_Rect row{panel.x + theme_local.panel_padding, item_y - 2,
+                           panel.w - theme_local.panel_padding * 2, line_h};
+              if (point_in_rect(mx, my, row)) {
+                settings_index = static_cast<int>(i);
+                apply_settings_action(settings_index);
+                break;
+              }
+              item_y += line_h + 6;
+            }
+          } else if (ui_mode == UiMode::InputMap) {
+            SDL_Rect panel = input_map_panel_rect();
+            int item_y = panel.y + theme_local.panel_padding + 18;
+            int line_h = 18;
+            for (std::size_t i = 0; i < map_actions.size(); ++i) {
+              SDL_Rect row{panel.x + theme_local.panel_padding, item_y - 2,
+                           panel.w - theme_local.panel_padding * 2, line_h};
+              if (point_in_rect(mx, my, row)) {
+                input_map_index = static_cast<int>(i);
+                if (event.button.clicks >= 2) {
+                  rebind_action = map_actions[i];
+                  rebind_active = true;
+                }
+                break;
+              }
+              item_y += line_h + 6;
+            }
+          } else if (ui_mode == UiMode::Launcher) {
+            LauncherLayout layout = launcher_layout();
+            launcher_visible = layout.visible;
+            if (point_in_rect(mx, my, layout.search_box)) {
+              search_focus = true;
+            } else {
+              search_focus = false;
+            }
+            if (point_in_rect(mx, my, layout.settings_button)) {
+              ui_mode = UiMode::Settings;
+              settings_index = 0;
+            } else if (point_in_rect(mx, my, layout.filter_hit)) {
+              cycle_launcher_filter(1);
+            } else if (point_in_rect(mx, my, layout.play_button)) {
+              launch_selected();
+            } else if (point_in_rect(mx, my, layout.favorite_button)) {
+              toggle_favorite();
+            } else if (point_in_rect(mx, my, layout.list_panel)) {
+              int rel_y = my - layout.start_y;
+              if (rel_y >= 0) {
+                int idx = rel_y / layout.card_h + launcher_scroll;
+                if (idx >= 0 && idx < static_cast<int>(launcher_list.size())) {
+                  launcher_index = idx;
+                  if (event.button.clicks >= 2) {
+                    launch_selected();
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if (event.type == SDL_CONTROLLERBUTTONDOWN || event.type == SDL_CONTROLLERBUTTONUP) {
+        bool pressed = (event.type == SDL_CONTROLLERBUTTONDOWN);
+        SDL_GameControllerButton button = static_cast<SDL_GameControllerButton>(event.cbutton.button);
+        if (button == SDL_CONTROLLER_BUTTON_GUIDE && pressed) {
+          if (ui_mode == UiMode::Menu) {
+            ui_mode = UiMode::Hidden;
+          } else if (ui_mode == UiMode::Settings) {
+            ui_mode = UiMode::Menu;
+          } else if (ui_mode == UiMode::InputMap) {
+            if (rebind_active) {
+              rebind_active = false;
+            } else {
+              ui_mode = UiMode::Settings;
+            }
+          } else if (ui_mode == UiMode::Hidden && game_loaded) {
+            ui_mode = UiMode::Menu;
+            menu_index = 0;
+          } else if (ui_mode == UiMode::Launcher) {
+            if (game_loaded) {
+              ui_mode = UiMode::Hidden;
+            }
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::InputMap && pressed) {
+          if (rebind_active) {
+            input_config.set_controller_button_binding(rebind_action, static_cast<int>(button));
+            save_input_map();
+            rebind_active = false;
+          } else {
+            if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+              input_map_index = (input_map_index - 1 + static_cast<int>(map_actions.size()))
+                                % static_cast<int>(map_actions.size());
+            } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+              input_map_index = (input_map_index + 1)
+                                % static_cast<int>(map_actions.size());
+            } else if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_START) {
+              rebind_action = map_actions[static_cast<std::size_t>(input_map_index)];
+              rebind_active = true;
+            } else if (button == SDL_CONTROLLER_BUTTON_B) {
+              ui_mode = UiMode::Settings;
+            } else if (button == SDL_CONTROLLER_BUTTON_Y) {
+              input_config.clear_controller_binding(
+                  map_actions[static_cast<std::size_t>(input_map_index)]);
+              save_input_map();
+            }
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Menu && pressed) {
+          if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+            move_menu(-1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+            move_menu(1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+            set_theme(next_theme(ui_theme, -1));
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+            set_theme(next_theme(ui_theme, 1));
+          } else if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_START) {
+            apply_menu_action(menu_index);
+          } else if (button == SDL_CONTROLLER_BUTTON_B) {
+            ui_mode = UiMode::Hidden;
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Settings && pressed) {
+          if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+            move_settings(-1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+            move_settings(1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+            adjust_settings(settings_index, -1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+            adjust_settings(settings_index, 1);
+          } else if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_START) {
+            apply_settings_action(settings_index);
+          } else if (button == SDL_CONTROLLER_BUTTON_B) {
+            ui_mode = UiMode::Menu;
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Launcher && pressed) {
+          if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+            move_launcher(-1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+            move_launcher(1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+            set_theme(next_theme(ui_theme, -1));
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+            set_theme(next_theme(ui_theme, 1));
+          } else if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_START) {
+            launch_selected();
+          } else if (button == SDL_CONTROLLER_BUTTON_X) {
+            cycle_launcher_filter(1);
+          } else if (button == SDL_CONTROLLER_BUTTON_Y) {
+            toggle_favorite();
+          } else if (button == SDL_CONTROLLER_BUTTON_B) {
+            if (game_loaded) {
+              ui_mode = UiMode::Hidden;
+            } else {
+              running = false;
+            }
+          }
+          continue;
+        }
+
+        if (ui_mode == UiMode::Hidden) {
+          if (update_joypad_button(button, pressed)) {
+            std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
+            if (combined != joypad_state) {
+              joypad_state = combined;
+              core.set_joypad_state(joypad_state);
+              core.request_interrupt(4);
+            }
+          }
+        }
+      } else if (event.type == SDL_CONTROLLERAXISMOTION) {
+        if (ui_mode == UiMode::InputMap && rebind_active) {
+          int value = event.caxis.value;
+          int deadzone = input_config.axis_deadzone();
+          if (value > deadzone || value < -deadzone) {
+            bool positive = value > 0;
+            input_config.set_controller_axis_binding(
+                rebind_action, static_cast<int>(event.caxis.axis), positive);
+            save_input_map();
+            rebind_active = false;
+          }
+          continue;
+        }
+        if (ui_mode == UiMode::Hidden) {
+          if (update_joypad_axis(static_cast<SDL_GameControllerAxis>(event.caxis.axis), event.caxis.value)) {
+            std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
+            if (combined != joypad_state) {
+              joypad_state = combined;
+              core.set_joypad_state(joypad_state);
+              core.request_interrupt(4);
+            }
+          }
         }
       }
     }
-    core.step_frame();
+    if (ui_mode != last_mode) {
+      update_text_input();
+      if (last_mode != UiMode::Hidden && ui_mode == UiMode::Hidden) {
+        key_state = 0xFF;
+        pad_state = 0xFF;
+        joypad_state = 0xFF;
+        core.set_joypad_state(joypad_state);
+      }
+      last_mode = ui_mode;
+    }
+    if (ui_mode == UiMode::Hidden && game_loaded) {
+      std::uint8_t polled_keys = poll_keyboard_state();
+      std::uint8_t polled_pad = poll_controller_state();
+      if (polled_keys != key_state) {
+        key_state = polled_keys;
+      }
+      if (polled_pad != pad_state) {
+        pad_state = polled_pad;
+      }
+      std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
+      if (combined != joypad_state) {
+        joypad_state = combined;
+        core.set_joypad_state(joypad_state);
+        core.request_interrupt(4);
+      }
+      core.step_frame();
+    }
     log_boot_state(frame_count);
     ++frame_count;
-    SDL_UpdateTexture(texture, nullptr, core.framebuffer(), core.framebuffer_stride_bytes());
+
+    const UiThemeDef& theme = theme_def(ui_theme);
+
     SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-    if (show_help) {
-      int w = fb_width * scale;
-      int h = fb_height * scale;
-      int panel_width = w > 360 ? 360 : w - 20;
-      int panel_height = 150;
+    if (game_loaded && texture) {
+      SDL_UpdateTexture(texture, nullptr, core.framebuffer(), core.framebuffer_stride_bytes());
+      SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+    } else {
+      SDL_Rect bg{0, 0, window_w, window_h};
+      fill_rect(renderer, bg, theme.bg_primary);
+      draw_menu_decor(renderer, bg, theme);
+    }
+
+    if (ui_mode != UiMode::Hidden) {
+      SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+      SDL_SetRenderDrawColor(renderer, 0, 0, 0, 120);
+      SDL_Rect dim{0, 0, window_w, window_h};
+      SDL_RenderFillRect(renderer, &dim);
+    }
+
+    if (show_help && ui_mode == UiMode::Hidden) {
+      int panel_width = window_w > 360 ? 360 : window_w - 20;
+      int panel_height = 160;
       SDL_Rect panel{10, 10, panel_width, panel_height};
       SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
       SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
@@ -1304,8 +3470,249 @@ int main(int argc, char** argv) {
       std::string help = build_help_text();
       draw_text(renderer, panel.x + 8, panel.y + 8, 2, help, SDL_Color{255, 255, 255, 255});
     }
+
+    if (ui_mode == UiMode::Menu) {
+      auto labels = menu_labels();
+      SDL_Rect panel = menu_panel_rect();
+      draw_panel(renderer, panel, theme);
+      draw_menu_decor(renderer, panel, theme);
+      int item_y = panel.y + theme.panel_padding;
+      int line_h = 18;
+      for (std::size_t i = 0; i < labels.size(); ++i) {
+        SDL_Rect row{panel.x + theme.panel_padding, item_y - 2,
+                     panel.w - theme.panel_padding * 2, line_h};
+        if (static_cast<int>(i) == menu_index) {
+          fill_rect(renderer, row, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b, 80});
+        }
+        draw_text(renderer, row.x + 4, row.y + 4, 2, upper_ascii(labels[i]), theme.text);
+        item_y += line_h + 6;
+      }
+      std::string footer = "ENTER/A SELECT  ESC/B CLOSE";
+      draw_text(renderer, panel.x + theme.panel_padding, panel.y + panel.h - 22, 2, footer, theme.text);
+    } else if (ui_mode == UiMode::Settings) {
+      auto labels = settings_labels();
+      SDL_Rect panel = settings_panel_rect();
+      draw_panel(renderer, panel, theme);
+      draw_menu_decor(renderer, panel, theme);
+      int item_y = panel.y + theme.panel_padding;
+      int line_h = 18;
+      for (std::size_t i = 0; i < labels.size(); ++i) {
+        SDL_Rect row{panel.x + theme.panel_padding, item_y - 2,
+                     panel.w - theme.panel_padding * 2, line_h};
+        if (static_cast<int>(i) == settings_index) {
+          fill_rect(renderer, row, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b, 80});
+        }
+        draw_text(renderer, row.x + 4, row.y + 4, 2, upper_ascii(labels[i]), theme.text);
+        item_y += line_h + 6;
+      }
+      std::string footer = "LEFT/RIGHT ADJUST  ENTER/A TOGGLE  ESC/B BACK";
+      draw_text(renderer, panel.x + theme.panel_padding, panel.y + panel.h - 22, 2, footer, theme.text);
+    } else if (ui_mode == UiMode::InputMap) {
+      SDL_Rect panel = input_map_panel_rect();
+      draw_panel(renderer, panel, theme);
+      draw_menu_decor(renderer, panel, theme);
+      int header_y = panel.y + theme.panel_padding;
+      draw_text(renderer, panel.x + theme.panel_padding, header_y, 2, "ACTION", theme.text);
+      draw_text(renderer, panel.x + panel.w / 2 - 20, header_y, 2, "KEY", theme.text);
+      draw_text(renderer, panel.x + panel.w - theme.panel_padding - 80, header_y, 2, "PAD", theme.text);
+
+      int item_y = header_y + 18;
+      int line_h = 18;
+      for (std::size_t i = 0; i < map_actions.size(); ++i) {
+        SDL_Rect row{panel.x + theme.panel_padding, item_y - 2,
+                     panel.w - theme.panel_padding * 2, line_h};
+        if (static_cast<int>(i) == input_map_index) {
+          fill_rect(renderer, row, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b, 80});
+        }
+        auto action = map_actions[i];
+        std::string action_label = upper_ascii(gbemu::common::action_name(action));
+        draw_text(renderer, row.x + 4, row.y + 4, 2, action_label, theme.text);
+
+        std::string key = key_label(input_config.key_for(action));
+        draw_text(renderer, panel.x + panel.w / 2 - 20, row.y + 4, 2, key, theme.text);
+
+        std::string pad = "NONE";
+        if (auto button = input_config.controller_button_for_action(action)) {
+          pad = controller_button_label(*button);
+        } else if (auto axis = input_config.controller_axis_for_action(action)) {
+          pad = controller_axis_label(axis->first, axis->second);
+        }
+        draw_text(renderer, panel.x + panel.w - theme.panel_padding - 80, row.y + 4, 2, pad, theme.text);
+        item_y += line_h + 6;
+      }
+
+      if (rebind_active) {
+        SDL_Rect overlay{panel.x + 20, panel.y + panel.h / 2 - 20, panel.w - 40, 40};
+        draw_panel(renderer, overlay, theme);
+        draw_text(renderer, overlay.x + 10, overlay.y + 12, 2,
+                  "PRESS A KEY OR BUTTON...", theme.text);
+      }
+
+      std::string footer = "ENTER/A REBIND  DEL CLEAR PAD  BACKSPACE CLEAR KEY  ESC/B BACK";
+      draw_text(renderer, panel.x + theme.panel_padding, panel.y + panel.h - 22, 2, footer, theme.text);
+    } else if (ui_mode == UiMode::Launcher) {
+      LauncherLayout layout = launcher_layout();
+      launcher_visible = layout.visible;
+      SDL_Rect header = layout.header;
+      fill_rect(renderer, header, theme.bg_secondary);
+      draw_text(renderer, 14, 12, 2, "GBEMU LAUNCHER", theme.text);
+      SDL_Rect search_box = layout.search_box;
+      fill_rect(renderer, search_box, theme.panel);
+      SDL_Color border = search_focus ? theme.accent : theme.panel_border;
+      SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, border.a);
+      SDL_RenderDrawRect(renderer, &search_box);
+      std::string search_text;
+      if (launcher_search.empty()) {
+        search_text = search_focus ? "TYPE TO SEARCH" : "/ TO SEARCH";
+      } else {
+        search_text = launcher_search;
+      }
+      if (search_focus && ((frame_count / 30) % 2 == 0)) {
+        search_text.push_back('|');
+      }
+      std::string search_display = upper_ascii(search_text);
+      int max_search_w = search_box.w - 10;
+      while (text_width(search_display, 2) > max_search_w && !search_display.empty()) {
+        search_display.erase(search_display.begin());
+      }
+      draw_text(renderer, search_box.x + 6, search_box.y + 6, 2, search_display, theme.text);
+
+      SDL_Rect settings_button = layout.settings_button;
+      draw_panel(renderer, settings_button, theme);
+      draw_text(renderer, settings_button.x + 6, settings_button.y + 6, 2, "SETTINGS", theme.text);
+
+      std::string theme_label = upper_ascii(ui_theme_name(ui_theme));
+      int theme_w = text_width(theme_label, 2);
+      draw_text(renderer, window_w - 14 - theme_w, 4, 2, theme_label, theme.accent);
+      std::string filter_label = "FILTER: " + upper_ascii(launcher_filter_name(launcher_filter));
+      std::string count_label = std::to_string(launcher_list.size()) + "/" + std::to_string(roms.size());
+      int filter_w = text_width(filter_label, 2);
+      int count_w = text_width(count_label, 2);
+      draw_text(renderer, window_w - 14 - filter_w, 20, 2, filter_label, theme.text);
+      draw_text(renderer, window_w - 14 - count_w, 30, 2, count_label, theme.accent);
+
+      SDL_Rect list_panel = layout.list_panel;
+      SDL_Rect detail_panel = layout.detail_panel;
+      draw_panel(renderer, list_panel, theme);
+      draw_panel(renderer, detail_panel, theme);
+
+      int card_h = layout.card_h;
+      int visible = layout.visible;
+      if (launcher_index < launcher_scroll) {
+        launcher_scroll = launcher_index;
+      } else if (launcher_index >= launcher_scroll + visible) {
+        launcher_scroll = launcher_index - visible + 1;
+      }
+
+      auto color_from_hash = [&](const std::string& name) {
+        std::uint32_t h = 0;
+        for (char c : name) {
+          h = (h * 131) + static_cast<std::uint8_t>(c);
+        }
+        std::uint8_t r = static_cast<std::uint8_t>(theme.accent.r / 2 + (h & 0x3F));
+        std::uint8_t g = static_cast<std::uint8_t>(theme.accent.g / 2 + ((h >> 6) & 0x3F));
+        std::uint8_t b = static_cast<std::uint8_t>(theme.accent.b / 2 + ((h >> 12) & 0x3F));
+        return SDL_Color{r, g, b, 255};
+      };
+
+      int start_y = layout.start_y;
+      if (roms.empty()) {
+        draw_text(renderer, list_panel.x + 12, list_panel.y + 12, 2, "NO ROMS FOUND", theme.text);
+      } else if (launcher_list.empty()) {
+        draw_text(renderer, list_panel.x + 12, list_panel.y + 12, 2, "NO MATCHES", theme.text);
+      } else {
+        for (int i = 0; i < visible; ++i) {
+          int idx = launcher_scroll + i;
+          if (idx >= static_cast<int>(launcher_list.size())) {
+            break;
+          }
+          int rom_index = launcher_list[idx];
+          const auto& entry = roms[rom_index];
+          SDL_Rect card{list_panel.x + 8, start_y + i * card_h,
+                        list_panel.w - 16, card_h - 4};
+          SDL_Color card_color = (i % 2 == 0) ? theme.bg_secondary : theme.panel;
+          fill_rect(renderer, card, card_color);
+          if (idx == launcher_index) {
+            fill_rect(renderer, card, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b, 60});
+            SDL_SetRenderDrawColor(renderer, theme.accent.r, theme.accent.g, theme.accent.b, 255);
+            SDL_RenderDrawRect(renderer, &card);
+          }
+          SDL_Color chip = color_from_hash(entry.title);
+          SDL_Rect art{card.x + 6, card.y + 6, 20, 20};
+          fill_rect(renderer, art, chip);
+          std::string line = upper_ascii(entry.title);
+          draw_text(renderer, card.x + 32, card.y + 6, 2, line, theme.text);
+          std::string meta = system_short(entry.system) + "  " + format_bytes(entry.size);
+          draw_text(renderer, card.x + 32, card.y + 18, 2, meta, theme.text);
+          if (favorite_paths.count(entry.path)) {
+            std::string fav = "FAV";
+            int fav_w = text_width(fav, 2);
+            draw_text(renderer, card.x + card.w - fav_w - 6, card.y + 6, 2, fav, theme.accent);
+          }
+        }
+      }
+
+      if (!launcher_list.empty()) {
+        int rom_index = launcher_list[launcher_index];
+        const auto& entry = roms[rom_index];
+        std::string title = upper_ascii(entry.title);
+        draw_text(renderer, detail_panel.x + 10, detail_panel.y + 10, 2, title, theme.text);
+        std::string info = "SYSTEM: " + system_short(entry.system);
+        draw_text(renderer, detail_panel.x + 10, detail_panel.y + 28, 2, info, theme.text);
+        std::string size = "SIZE: " + format_bytes(entry.size);
+        draw_text(renderer, detail_panel.x + 10, detail_panel.y + 44, 2, size, theme.text);
+        std::string path = upper_ascii(std::filesystem::path(entry.path).filename().string());
+        draw_text(renderer, detail_panel.x + 10, detail_panel.y + 62, 2, path, theme.text);
+
+        if (favorite_paths.count(entry.path)) {
+          draw_text(renderer, detail_panel.x + 10, detail_panel.y + 78, 2, "FAVORITE", theme.accent);
+        }
+
+        int art_y = detail_panel.y + 96;
+        int art_h = detail_panel.h - 140;
+        if (art_h > 30) {
+          SDL_Rect art_box{detail_panel.x + 10, art_y, detail_panel.w - 20, art_h};
+          draw_panel(renderer, art_box, theme);
+          if (CoverTexture* cover = get_cover_texture(entry.cover_path)) {
+            SDL_Rect dst = fit_rect(art_box.w, art_box.h, cover->width, cover->height,
+                                    art_box.x, art_box.y);
+            SDL_RenderCopy(renderer, cover->texture, nullptr, &dst);
+          } else {
+            SDL_Color chip = color_from_hash(entry.title);
+            SDL_Rect chip_rect{art_box.x + 8, art_box.y + 8, 28, 28};
+            fill_rect(renderer, chip_rect, chip);
+            draw_text(renderer, art_box.x + 44, art_box.y + 14, 2, "NO COVER", theme.text);
+          }
+        }
+
+        SDL_Rect play_button = layout.play_button;
+        SDL_Rect favorite_button = layout.favorite_button;
+        draw_panel(renderer, play_button, theme);
+        draw_panel(renderer, favorite_button, theme);
+        draw_text(renderer, play_button.x + 8, play_button.y + 6, 2, "PLAY", theme.text);
+        std::string fav_label = favorite_paths.count(entry.path) ? "UNFAV" : "FAVORITE";
+        draw_text(renderer, favorite_button.x + 8, favorite_button.y + 6, 2, fav_label, theme.text);
+      }
+
+      std::string actions = "ENTER/A START  / SEARCH  TAB/X FILTER  F/Y FAVORITE  R RESCAN  ESC/B BACK/QUIT";
+      draw_text(renderer, detail_panel.x + 10, detail_panel.y + detail_panel.h - 22, 2, actions, theme.text);
+
+      if (!launcher_error.empty()) {
+        SDL_Rect err_panel{detail_panel.x + 10, detail_panel.y + detail_panel.h - 50,
+                           detail_panel.w - 20, 20};
+        fill_rect(renderer, err_panel, SDL_Color{120, 20, 20, 180});
+        draw_text(renderer, err_panel.x + 4, err_panel.y + 4, 2, "FAILED TO LOAD", theme.text);
+      }
+    } else if (theme_toast_frames > 0) {
+      SDL_Rect toast{10, window_h - 36, 220, 26};
+      draw_panel(renderer, toast, theme);
+      std::string toast_text = "THEME: " + upper_ascii(ui_theme_name(ui_theme));
+      draw_text(renderer, toast.x + 8, toast.y + 6, 2, toast_text, theme.text);
+      --theme_toast_frames;
+    }
     SDL_RenderPresent(renderer);
-    if (audio_device != 0 && sample_rate > 0) {
+    if (audio_device != 0 && sample_rate > 0 && audio_enabled &&
+        ui_mode == UiMode::Hidden && game_loaded) {
       audio_accum += static_cast<double>(sample_rate) / target_fps;
       int samples = static_cast<int>(audio_accum);
       if (samples > 0) {
@@ -1323,11 +3730,29 @@ int main(int argc, char** argv) {
     pacer.sleep();
   }
 
+  save_ui_state(ui_state_path.string(), ui_theme, scale, target_fps,
+                input_config.axis_deadzone(), show_help, audio_enabled);
   save_state();
+
+  for (auto& entry : controllers) {
+    SDL_GameControllerClose(entry.second);
+  }
+  controllers.clear();
 
   if (audio_device != 0) {
     SDL_CloseAudioDevice(audio_device);
   }
+
+  for (auto& entry : cover_cache) {
+    if (entry.second.texture) {
+      SDL_DestroyTexture(entry.second.texture);
+    }
+  }
+  cover_cache.clear();
+
+#ifdef GBEMU_HAS_SDL_IMAGE
+  IMG_Quit();
+#endif
 
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);

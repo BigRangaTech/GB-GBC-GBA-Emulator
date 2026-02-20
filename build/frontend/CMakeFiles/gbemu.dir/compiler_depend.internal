@@ -104,6 +104,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/c++/15/bits/fs_fwd.h
  /usr/include/c++/15/bits/fs_ops.h
  /usr/include/c++/15/bits/fs_path.h
+ /usr/include/c++/15/bits/fstream.tcc
  /usr/include/c++/15/bits/functexcept.h
  /usr/include/c++/15/bits/functional_hash.h
  /usr/include/c++/15/bits/hash_bytes.h
@@ -163,6 +164,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/c++/15/bits/stl_iterator_base_types.h
  /usr/include/c++/15/bits/stl_pair.h
  /usr/include/c++/15/bits/stl_raw_storage_iter.h
+ /usr/include/c++/15/bits/stl_relops.h
  /usr/include/c++/15/bits/stl_tempbuf.h
  /usr/include/c++/15/bits/stl_uninitialized.h
  /usr/include/c++/15/bits/stl_vector.h
@@ -173,6 +175,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/c++/15/bits/uniform_int_dist.h
  /usr/include/c++/15/bits/unique_ptr.h
  /usr/include/c++/15/bits/unordered_map.h
+ /usr/include/c++/15/bits/unordered_set.h
  /usr/include/c++/15/bits/uses_allocator.h
  /usr/include/c++/15/bits/uses_allocator_args.h
  /usr/include/c++/15/bits/utility.h
@@ -204,6 +207,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/c++/15/ext/string_conversions.h
  /usr/include/c++/15/ext/type_traits.h
  /usr/include/c++/15/filesystem
+ /usr/include/c++/15/fstream
  /usr/include/c++/15/initializer_list
  /usr/include/c++/15/iomanip
  /usr/include/c++/15/ios
@@ -246,6 +250,8 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/c++/15/type_traits
  /usr/include/c++/15/typeinfo
  /usr/include/c++/15/unordered_map
+ /usr/include/c++/15/unordered_set
+ /usr/include/c++/15/utility
  /usr/include/c++/15/vector
  /usr/include/ctype.h
  /usr/include/endian.h
@@ -369,8 +375,10 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/x86_64-linux-gnu/bits/wordsize.h
  /usr/include/x86_64-linux-gnu/bits/xopen_lim.h
  /usr/include/x86_64-linux-gnu/c++/15/bits/atomic_word.h
+ /usr/include/x86_64-linux-gnu/c++/15/bits/basic_file.h
  /usr/include/x86_64-linux-gnu/c++/15/bits/c++allocator.h
  /usr/include/x86_64-linux-gnu/c++/15/bits/c++config.h
+ /usr/include/x86_64-linux-gnu/c++/15/bits/c++io.h
  /usr/include/x86_64-linux-gnu/c++/15/bits/c++locale.h
  /usr/include/x86_64-linux-gnu/c++/15/bits/cpu_defines.h
  /usr/include/x86_64-linux-gnu/c++/15/bits/ctype_base.h

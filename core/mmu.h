@@ -34,6 +34,7 @@ class Mmu {
   std::uint8_t obj_palette_byte(int index) const;
   void set_joypad_state(std::uint8_t state);
   bool handle_stop();
+  void on_hblank();
   void serialize(std::vector<std::uint8_t>* out) const;
   bool deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset, std::string* error);
   bool has_battery() const;
@@ -49,6 +50,7 @@ class Mmu {
     None,
     MBC1,
     MBC3,
+    MBC5,
   };
 
   std::uint8_t read_rom(std::uint16_t address) const;
@@ -56,6 +58,9 @@ class Mmu {
   int ram_banks_from_code(std::uint8_t code) const;
   int effective_rom_bank() const;
   int effective_ram_bank() const;
+  int effective_wram_bank() const;
+  void hdma_start(std::uint8_t value);
+  void hdma_transfer_block();
 
   System system_ = System::GB;
   bool boot_rom_enabled_ = false;
@@ -91,6 +96,7 @@ class Mmu {
 
   std::uint8_t vram_bank_ = 0;
   std::uint8_t key1_ = 0;
+  std::uint8_t wram_bank_ = 1;
   std::array<std::uint8_t, 64> bg_palette_{};
   std::array<std::uint8_t, 64> obj_palette_{};
   std::uint8_t bgpi_ = 0;
@@ -105,6 +111,11 @@ class Mmu {
   bool rtc_latched_ = false;
   std::array<std::uint8_t, 5> rtc_latch_{};
   std::uint8_t rtc_latch_state_ = 0;
+
+  std::uint16_t hdma_source_ = 0;
+  std::uint16_t hdma_dest_ = 0;
+  std::uint8_t hdma_length_ = 0;
+  bool hdma_active_ = false;
 };
 
 } // namespace gbemu::core

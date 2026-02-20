@@ -103,6 +103,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/include/c++/15/bits/fs_fwd.h \
   /usr/include/c++/15/bits/fs_ops.h \
   /usr/include/c++/15/bits/fs_path.h \
+  /usr/include/c++/15/bits/fstream.tcc \
   /usr/include/c++/15/bits/functexcept.h \
   /usr/include/c++/15/bits/functional_hash.h \
   /usr/include/c++/15/bits/hash_bytes.h \
@@ -162,6 +163,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
   /usr/include/c++/15/bits/stl_pair.h \
   /usr/include/c++/15/bits/stl_raw_storage_iter.h \
+  /usr/include/c++/15/bits/stl_relops.h \
   /usr/include/c++/15/bits/stl_tempbuf.h \
   /usr/include/c++/15/bits/stl_uninitialized.h \
   /usr/include/c++/15/bits/stl_vector.h \
@@ -172,6 +174,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/include/c++/15/bits/uniform_int_dist.h \
   /usr/include/c++/15/bits/unique_ptr.h \
   /usr/include/c++/15/bits/unordered_map.h \
+  /usr/include/c++/15/bits/unordered_set.h \
   /usr/include/c++/15/bits/uses_allocator.h \
   /usr/include/c++/15/bits/uses_allocator_args.h \
   /usr/include/c++/15/bits/utility.h \
@@ -203,6 +206,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/include/c++/15/ext/string_conversions.h \
   /usr/include/c++/15/ext/type_traits.h \
   /usr/include/c++/15/filesystem \
+  /usr/include/c++/15/fstream \
   /usr/include/c++/15/initializer_list \
   /usr/include/c++/15/iomanip \
   /usr/include/c++/15/ios \
@@ -245,6 +249,8 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/include/c++/15/type_traits \
   /usr/include/c++/15/typeinfo \
   /usr/include/c++/15/unordered_map \
+  /usr/include/c++/15/unordered_set \
+  /usr/include/c++/15/utility \
   /usr/include/c++/15/vector \
   /usr/include/ctype.h \
   /usr/include/endian.h \
@@ -368,8 +374,10 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/include/x86_64-linux-gnu/bits/wordsize.h \
   /usr/include/x86_64-linux-gnu/bits/xopen_lim.h \
   /usr/include/x86_64-linux-gnu/c++/15/bits/atomic_word.h \
+  /usr/include/x86_64-linux-gnu/c++/15/bits/basic_file.h \
   /usr/include/x86_64-linux-gnu/c++/15/bits/c++allocator.h \
   /usr/include/x86_64-linux-gnu/c++/15/bits/c++config.h \
+  /usr/include/x86_64-linux-gnu/c++/15/bits/c++io.h \
   /usr/include/x86_64-linux-gnu/c++/15/bits/c++locale.h \
   /usr/include/x86_64-linux-gnu/c++/15/bits/cpu_defines.h \
   /usr/include/x86_64-linux-gnu/c++/15/bits/ctype_base.h \
@@ -751,7 +759,17 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /lib/x86_64-linux-gnu/libFLAC.so.14:
 
-/usr/lib/gcc/x86_64-linux-gnu/15/include/avx2intrin.h:
+/lib/i386-linux-gnu/libwayland-cursor.so.0:
+
+/lib/i386-linux-gnu/libwayland-client.so.0:
+
+/lib/i386-linux-gnu/libvorbis.so.0:
+
+/lib/i386-linux-gnu/libsystemd.so.0:
+
+/lib/i386-linux-gnu/libsamplerate.so.0:
+
+/lib/i386-linux-gnu/libpulse.so.0:
 
 /usr/include/features.h:
 
@@ -762,10 +780,6 @@ frontend/gbemu: common/libgbemu_common.a \
 /usr/include/c++/15/unordered_map:
 
 /usr/include/c++/15/tr1/special_function_util.h:
-
-/usr/include/libintl.h:
-
-/usr/include/x86_64-linux-gnu/bits/thread-shared-types.h:
 
 /usr/include/c++/15/tr1/riemann_zeta.tcc:
 
@@ -911,6 +925,8 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/clocale:
 
+/usr/include/c++/15/bits/stl_relops.h:
+
 /usr/include/c++/15/compare:
 
 /usr/include/c++/15/bits/cxxabi_forced.h:
@@ -945,7 +961,11 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/bits/ostream_insert.h:
 
-/lib/i386-linux-gnu/libsystemd.so.0:
+/lib/x86_64-linux-gnu/libpulse.so.0:
+
+/usr/include/SDL2/SDL_joystick.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmavlintrin.h:
 
 /usr/include/SDL2/begin_code.h:
 
@@ -1021,10 +1041,6 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/bits/char_traits.h:
 
-/usr/include/c++/15/tr1/gamma.tcc:
-
-/usr/include/limits.h:
-
 /usr/include/c++/15/bits/stl_iterator_base_funcs.h:
 
 /lib/i386-linux-gnu/libXrandr.so.2:
@@ -1041,13 +1057,15 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/SDL2/SDL_endian.h:
 
+/usr/include/c++/15/tr1/beta_function.tcc:
+
+/usr/include/SDL2/SDL_log.h:
+
 /usr/lib/x86_64-linux-gnu/crtn.o:
 
 /usr/include/SDL2/SDL_messagebox.h:
 
 /usr/include/c++/15/bits/hashtable.h:
-
-/usr/include/linux/posix_types.h:
 
 /usr/include/SDL2/SDL_locale.h:
 
@@ -1071,12 +1089,6 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/bits/fs_path.h:
 
-/lib/x86_64-linux-gnu/libpulse.so.0:
-
-/usr/include/SDL2/SDL_joystick.h:
-
-/usr/include/linux/limits.h:
-
 /usr/include/c++/15/tr1/modified_bessel_func.tcc:
 
 /usr/include/SDL2/SDL_assert.h:
@@ -1084,6 +1096,10 @@ frontend/gbemu: common/libgbemu_common.a \
 /usr/include/c++/15/pstl/pstl_config.h:
 
 /usr/include/c++/15/bits/basic_ios.tcc:
+
+/lib/i386-linux-gnu/libvorbisenc.so.2:
+
+/usr/include/SDL2/SDL.h:
 
 /usr/lib/i386-linux-gnu/libasyncns.so.0:
 
@@ -1123,15 +1139,17 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/x86_64-linux-gnu/bits/errno.h:
 
-/usr/include/linux/close_range.h:
-
-/usr/include/SDL2/SDL_touch.h:
-
 /usr/include/linux/stddef.h:
 
 /usr/include/c++/15/stdlib.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectvlintrin.h:
+
+/usr/include/c++/15/bits/stl_raw_storage_iter.h:
+
+/usr/include/c++/15/bits/ostream.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/cpu.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avxifmaintrin.h:
 
@@ -1144,14 +1162,6 @@ frontend/gbemu: common/libgbemu_common.a \
 /usr/include/c++/15/bits/max_size_type.h:
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.h:
-
-/usr/include/c++/15/bits/stl_raw_storage_iter.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/cpu.h:
-
-/usr/include/c++/15/bits/ostream.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmavlintrin.h:
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.h:
 
@@ -1231,6 +1241,8 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/istream:
 
+/usr/include/c++/15/utility:
+
 /usr/include/SDL2/SDL_error.h:
 
 /usr/include/c++/15/bits/version.h:
@@ -1261,6 +1273,10 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h:
 
+/lib/i386-linux-gnu/libsndfile.so.1:
+
+/usr/include/c++/15/bits/range_access.h:
+
 /usr/include/c++/15/algorithm:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/rdseedintrin.h:
@@ -1268,8 +1284,6 @@ frontend/gbemu: common/libgbemu_common.a \
 /usr/include/c++/15/bits/hash_bytes.h:
 
 /usr/include/x86_64-linux-gnu/bits/math-vector.h:
-
-/lib/i386-linux-gnu/libpulse.so.0:
 
 /usr/include/c++/15/bits/fs_ops.h:
 
@@ -1333,7 +1347,13 @@ core/libgbemu_core.a:
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/apu.h:
 
+/usr/include/c++/15/bits/fstream.tcc:
+
 /usr/include/c++/15/bits/invoke.h:
+
+/usr/include/c++/15/bits/memoryfwd.h:
+
+/usr/include/c++/15/bits/nested_exception.h:
 
 /lib/x86_64-linux-gnu/libwayland-cursor.so.0:
 
@@ -1345,17 +1365,9 @@ core/libgbemu_core.a:
 
 /usr/include/c++/15/bits/iterator_concepts.h:
 
-/usr/include/SDL2/SDL_log.h:
-
-/usr/include/c++/15/tr1/beta_function.tcc:
-
 /usr/lib/i386-linux-gnu/libXcursor.so.1:
 
 /usr/include/asm-generic/int-ll64.h:
-
-/usr/include/c++/15/bits/nested_exception.h:
-
-/usr/include/c++/15/bits/memoryfwd.h:
 
 /usr/include/c++/15/bits/locale_conv.h:
 
@@ -1391,7 +1403,25 @@ core/libgbemu_core.a:
 
 /usr/include/c++/15/bits/node_handle.h:
 
+/usr/include/c++/15/unordered_set:
+
 /lib/i386-linux-gnu/libmp3lame.so.0:
+
+/usr/include/x86_64-linux-gnu/bits/thread-shared-types.h:
+
+/usr/include/libintl.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx2intrin.h:
+
+/usr/include/c++/15/tr1/gamma.tcc:
+
+/usr/include/limits.h:
+
+/usr/include/SDL2/SDL_touch.h:
+
+/usr/include/linux/close_range.h:
+
+/usr/include/linux/posix_types.h:
 
 /usr/include/linux/types.h:
 
@@ -1473,6 +1503,8 @@ core/libgbemu_core.a:
 
 /lib/i386-linux-gnu/libwayland-egl.so.1:
 
+/usr/include/c++/15/fstream:
+
 /usr/lib/gcc/x86_64-linux-gnu/15/include/sgxintrin.h:
 
 /usr/include/c++/15/array:
@@ -1490,10 +1522,6 @@ core/libgbemu_core.a:
 /usr/include/x86_64-linux-gnu/bits/iscanonical.h:
 
 /usr/include/x86_64-linux-gnu/bits/libc-header-start.h:
-
-/lib/i386-linux-gnu/libsamplerate.so.0:
-
-/usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/struct_FILE.h:
 
@@ -1579,6 +1607,8 @@ core/libgbemu_core.a:
 
 /usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:
 
+/usr/include/c++/15/bits/unordered_set.h:
+
 /usr/include/x86_64-linux-gnu/bits/types/clock_t.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/clockid_t.h:
@@ -1594,6 +1624,10 @@ core/libgbemu_core.a:
 /usr/include/x86_64-linux-gnu/bits/types/locale_t.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/mbstate_t.h:
+
+/usr/include/linux/limits.h:
+
+/usr/include/x86_64-linux-gnu/c++/15/bits/basic_file.h:
 
 /usr/lib/i386-linux-gnu/libXi.so.6:
 
@@ -1638,6 +1672,10 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o:
 /usr/include/x86_64-linux-gnu/c++/15/bits/c++config.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/stddef.h:
+
+/usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h:
+
+/usr/include/x86_64-linux-gnu/c++/15/bits/c++io.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/error_constants.h:
 
@@ -1703,8 +1741,6 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512minmaxintrin.h:
 
-/lib/i386-linux-gnu/libwayland-client.so.0:
-
 /usr/lib/gcc/x86_64-linux-gnu/15/include/emmintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2convertintrin.h:
@@ -1730,10 +1766,6 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o:
 /usr/lib/gcc/x86_64-linux-gnu/15/include/clwbintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fp16vlintrin.h:
-
-/usr/include/c++/15/bits/range_access.h:
-
-/lib/i386-linux-gnu/libsndfile.so.1:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmaintrin.h:
 
@@ -1812,10 +1844,6 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o:
 /usr/lib/gcc/x86_64-linux-gnu/15/include/rtmintrin.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/sha512intrin.h:
-
-/usr/include/SDL2/SDL.h:
-
-/lib/i386-linux-gnu/libvorbisenc.so.2:
 
 /lib/i386-linux-gnu/libXcursor.so.1:
 
@@ -1910,7 +1938,3 @@ common/libgbemu_common.a:
 /lib/i386-linux-gnu/libmpg123.so.0:
 
 /lib/i386-linux-gnu/libopus.so.0:
-
-/lib/i386-linux-gnu/libvorbis.so.0:
-
-/lib/i386-linux-gnu/libwayland-cursor.so.0:

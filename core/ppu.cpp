@@ -165,6 +165,9 @@ void Ppu::step(int cycles, Mmu* mmu) {
 
   std::uint8_t stat = mmu->read_u8(0xFF41);
   if (new_mode != mode_) {
+    if (new_mode == 0) {
+      mmu->on_hblank();
+    }
     if (new_mode == 0 && (stat & 0x08)) {
       mmu->request_interrupt(1);
     } else if (new_mode == 1 && (stat & 0x10)) {

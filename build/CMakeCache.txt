@@ -195,6 +195,9 @@ GBEMU_BUILD_TESTS:BOOL=ON
 //The directory containing a CMake configuration file for SDL2.
 SDL2_DIR:PATH=/usr/lib/x86_64-linux-gnu/cmake/SDL2
 
+//The directory containing a CMake configuration file for SDL2_image.
+SDL2_image_DIR:PATH=SDL2_image_DIR-NOTFOUND
+
 //Value Computed by CMake
 gbemu_BINARY_DIR:STATIC=/home/jessie/Documents/GB-GBC-GBA-Emulator/build
 

@@ -33,6 +33,13 @@ std::size_t boot_rom_range(System system) {
   }
 }
 
+bool boot_rom_maps_address(System system, std::uint16_t address) {
+  if (system == System::GBC) {
+    return address < 0x0100 || (address >= 0x0200 && address < 0x0900);
+  }
+  return address < boot_rom_range(system);
+}
+
 std::array<std::uint8_t, 5> rtc_regs_from_seconds(std::int64_t total_seconds) {
   std::array<std::uint8_t, 5> regs{};
   if (total_seconds < 0) {
@@ -110,6 +117,7 @@ bool Mmu::load(System system,
   ram_bank_ = 0;
   vram_bank_ = 0;
   key1_ = 0;
+  wram_bank_ = 1;
   bg_palette_.fill(0);
   obj_palette_.fill(0);
   bgpi_ = 0;
@@ -145,6 +153,14 @@ bool Mmu::load(System system,
       case 0x13:
         mbc_type_ = MbcType::MBC3;
         break;
+      case 0x19:
+      case 0x1A:
+      case 0x1B:
+      case 0x1C:
+      case 0x1D:
+      case 0x1E:
+        mbc_type_ = MbcType::MBC5;
+        break;
       default:
         mbc_type_ = MbcType::None;
         break;
@@ -158,7 +174,7 @@ bool Mmu::load(System system,
   ram_banks_ = ram_banks_from_code(ram_size_code_);
 
   vram_.assign(system_ == System::GBC ? 0x4000 : 0x2000, 0);
-  wram_.assign(0x2000, 0);
+  wram_.assign(system_ == System::GBC ? 0x8000 : 0x2000, 0);
   eram_.assign(static_cast<std::size_t>(ram_banks_ * 0x2000), 0);
   oam_.assign(0xA0, 0);
   io_.assign(0x80, 0);
@@ -210,8 +226,7 @@ void Mmu::step(int cycles) {
 
 std::uint8_t Mmu::read_u8(std::uint16_t address) const {
   if (boot_rom_enabled_) {
-    std::size_t limit = boot_rom_range(system_);
-    if (address < limit && address < boot_rom_.size()) {
+    if (boot_rom_maps_address(system_, address) && address < boot_rom_.size()) {
       return boot_rom_[address];
     }
   }
@@ -240,10 +255,29 @@ std::uint8_t Mmu::read_u8(std::uint16_t address) const {
     return 0xFF;
   }
   if (address < 0xE000) {
-    return wram_[address - 0xC000];
+    std::uint16_t offset = static_cast<std::uint16_t>(address - 0xC000);
+    if (offset < 0x1000) {
+      return wram_[offset];
+    }
+    int bank = effective_wram_bank();
+    std::size_t idx = static_cast<std::size_t>(bank) * 0x1000 + (offset - 0x1000);
+    if (idx < wram_.size()) {
+      return wram_[idx];
+    }
+    return 0xFF;
   }
   if (address < 0xFE00) {
-    return wram_[address - 0xE000];
+    std::uint16_t echoed = static_cast<std::uint16_t>(address - 0x2000);
+    std::uint16_t offset = static_cast<std::uint16_t>(echoed - 0xC000);
+    if (offset < 0x1000) {
+      return wram_[offset];
+    }
+    int bank = effective_wram_bank();
+    std::size_t idx = static_cast<std::size_t>(bank) * 0x1000 + (offset - 0x1000);
+    if (idx < wram_.size()) {
+      return wram_[idx];
+    }
+    return 0xFF;
   }
   if (address < 0xFEA0) {
     return oam_[address - 0xFE00];
@@ -260,6 +294,24 @@ std::uint8_t Mmu::read_u8(std::uint16_t address) const {
       case 0xFF4D:
         if (system_ == System::GBC) {
           return static_cast<std::uint8_t>(0x7E | (key1_ & 0x81));
+        }
+        return 0xFF;
+      case 0xFF51: return io_[0x51];
+      case 0xFF52: return static_cast<std::uint8_t>(io_[0x52] | 0x0F);
+      case 0xFF53: return static_cast<std::uint8_t>(io_[0x53] | 0xE0);
+      case 0xFF54: return static_cast<std::uint8_t>(io_[0x54] | 0x0F);
+      case 0xFF55:
+        if (system_ == System::GBC) {
+          if (!hdma_active_) {
+            return 0xFF;
+          }
+          return static_cast<std::uint8_t>(hdma_length_ == 0 ? 0xFF
+                                                             : ((hdma_length_ - 1) & 0x7F));
+        }
+        return 0xFF;
+      case 0xFF70:
+        if (system_ == System::GBC) {
+          return static_cast<std::uint8_t>(0xF8 | (wram_bank_ & 0x07));
         }
         return 0xFF;
       case 0xFF4F:
@@ -339,6 +391,19 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
       return;
     }
 
+    if (mbc_type_ == MbcType::MBC5) {
+      if (address < 0x2000) {
+        ram_enabled_ = ((value & 0x0F) == 0x0A);
+      } else if (address < 0x3000) {
+        rom_bank_low_ = value;
+      } else if (address < 0x4000) {
+        rom_bank_high_ = static_cast<std::uint8_t>(value & 0x01);
+      } else if (address < 0x6000) {
+        ram_bank_ = static_cast<std::uint8_t>(value & 0x0F);
+      }
+      return;
+    }
+
     return;
   }
   if (address < 0xA000) {
@@ -368,11 +433,30 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
     return;
   }
   if (address < 0xE000) {
-    wram_[address - 0xC000] = value;
+    std::uint16_t offset = static_cast<std::uint16_t>(address - 0xC000);
+    if (offset < 0x1000) {
+      wram_[offset] = value;
+      return;
+    }
+    int bank = effective_wram_bank();
+    std::size_t idx = static_cast<std::size_t>(bank) * 0x1000 + (offset - 0x1000);
+    if (idx < wram_.size()) {
+      wram_[idx] = value;
+    }
     return;
   }
   if (address < 0xFE00) {
-    wram_[address - 0xE000] = value;
+    std::uint16_t echoed = static_cast<std::uint16_t>(address - 0x2000);
+    std::uint16_t offset = static_cast<std::uint16_t>(echoed - 0xC000);
+    if (offset < 0x1000) {
+      wram_[offset] = value;
+      return;
+    }
+    int bank = effective_wram_bank();
+    std::size_t idx = static_cast<std::size_t>(bank) * 0x1000 + (offset - 0x1000);
+    if (idx < wram_.size()) {
+      wram_[idx] = value;
+    }
     return;
   }
   if (address < 0xFEA0) {
@@ -397,6 +481,54 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
         break;
       case 0xFF07:
         tac_ = static_cast<std::uint8_t>(value & 0x07);
+        break;
+      case 0xFF46: {
+        io_[0x46] = value;
+        std::uint16_t source = static_cast<std::uint16_t>(value) << 8;
+        for (int i = 0; i < 0xA0; ++i) {
+          std::uint16_t addr = static_cast<std::uint16_t>(source + i);
+          oam_[static_cast<std::size_t>(i)] = read_u8(addr);
+        }
+        break;
+      }
+      case 0xFF51:
+        if (system_ == System::GBC) {
+          io_[0x51] = value;
+        }
+        break;
+      case 0xFF52:
+        if (system_ == System::GBC) {
+          io_[0x52] = static_cast<std::uint8_t>(value & 0xF0);
+        }
+        break;
+      case 0xFF53:
+        if (system_ == System::GBC) {
+          io_[0x53] = static_cast<std::uint8_t>(value & 0x1F);
+        }
+        break;
+      case 0xFF54:
+        if (system_ == System::GBC) {
+          io_[0x54] = static_cast<std::uint8_t>(value & 0xF0);
+        }
+        break;
+      case 0xFF55:
+        if (system_ == System::GBC) {
+          if (hdma_active_ && (value & 0x80) == 0) {
+            hdma_active_ = false;
+            hdma_length_ = 0;
+          } else {
+            hdma_start(value);
+          }
+        }
+        break;
+      case 0xFF70:
+        if (system_ == System::GBC) {
+          std::uint8_t bank = static_cast<std::uint8_t>(value & 0x07);
+          if (bank == 0) {
+            bank = 1;
+          }
+          wram_bank_ = bank;
+        }
         break;
       case 0xFF4D:
         if (system_ == System::GBC) {
@@ -519,6 +651,12 @@ bool Mmu::handle_stop() {
   return false;
 }
 
+void Mmu::on_hblank() {
+  if (hdma_active_ && hdma_length_ > 0) {
+    hdma_transfer_block();
+  }
+}
+
 void Mmu::serialize(std::vector<std::uint8_t>* out) const {
   if (!out) {
     return;
@@ -537,6 +675,7 @@ void Mmu::serialize(std::vector<std::uint8_t>* out) const {
   state_io::write_u8(*out, ram_bank_);
   state_io::write_u8(*out, vram_bank_);
   state_io::write_u8(*out, key1_);
+  state_io::write_u8(*out, wram_bank_);
   state_io::write_u8(*out, interrupt_enable_);
 
   state_io::write_u8(*out, div_);
@@ -568,6 +707,11 @@ void Mmu::serialize(std::vector<std::uint8_t>* out) const {
   state_io::write_bytes(*out, oam_);
   state_io::write_bytes(*out, io_);
   state_io::write_bytes(*out, hram_);
+
+  state_io::write_u16(*out, hdma_source_);
+  state_io::write_u16(*out, hdma_dest_);
+  state_io::write_u8(*out, hdma_length_);
+  state_io::write_bool(*out, hdma_active_);
 }
 
 bool Mmu::deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset, std::string* error) {
@@ -593,6 +737,7 @@ bool Mmu::deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset
   if (!state_io::read_u8(data, offset, ram_bank_)) return false;
   if (!state_io::read_u8(data, offset, vram_bank_)) return false;
   if (!state_io::read_u8(data, offset, key1_)) return false;
+  if (!state_io::read_u8(data, offset, wram_bank_)) return false;
   if (!state_io::read_u8(data, offset, interrupt_enable_)) return false;
 
   if (!state_io::read_u8(data, offset, div_)) return false;
@@ -626,6 +771,11 @@ bool Mmu::deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset
   if (!state_io::read_bytes(data, offset, oam_)) return false;
   if (!state_io::read_bytes(data, offset, io_)) return false;
   if (!state_io::read_bytes(data, offset, hram_)) return false;
+
+  if (!state_io::read_u16(data, offset, hdma_source_)) return false;
+  if (!state_io::read_u16(data, offset, hdma_dest_)) return false;
+  if (!state_io::read_u8(data, offset, hdma_length_)) return false;
+  if (!state_io::read_bool(data, offset, hdma_active_)) return false;
   return true;
 }
 
@@ -787,10 +937,12 @@ int Mmu::effective_rom_bank() const {
     if (bank == 0) {
       bank = 1;
     }
+  } else if (mbc_type_ == MbcType::MBC5) {
+    bank = static_cast<int>((rom_bank_high_ & 0x01) << 8) | rom_bank_low_;
   }
   if (rom_banks_ > 0) {
     bank %= rom_banks_;
-    if (bank == 0) {
+    if (mbc_type_ != MbcType::MBC5 && bank == 0) {
       bank = 1;
     }
   }
@@ -813,7 +965,57 @@ int Mmu::effective_ram_bank() const {
     }
     return 0;
   }
+  if (mbc_type_ == MbcType::MBC5) {
+    return static_cast<int>(ram_bank_ & 0x0F);
+  }
   return 0;
+}
+
+int Mmu::effective_wram_bank() const {
+  if (system_ != System::GBC) {
+    return 1;
+  }
+  int bank = static_cast<int>(wram_bank_ & 0x07);
+  if (bank == 0) {
+    bank = 1;
+  }
+  return bank;
+}
+
+void Mmu::hdma_start(std::uint8_t value) {
+  if (system_ != System::GBC) {
+    return;
+  }
+  std::uint16_t source = static_cast<std::uint16_t>((io_[0x51] << 8) | (io_[0x52] & 0xF0));
+  std::uint16_t dest = static_cast<std::uint16_t>(0x8000 | ((io_[0x53] & 0x1F) << 8) | (io_[0x54] & 0xF0));
+  hdma_source_ = source;
+  hdma_dest_ = dest;
+  hdma_length_ = static_cast<std::uint8_t>((value & 0x7F) + 1);
+  bool hblank = (value & 0x80) != 0;
+  if (hblank) {
+    hdma_active_ = true;
+  } else {
+    hdma_active_ = false;
+    while (hdma_length_ > 0) {
+      hdma_transfer_block();
+    }
+    hdma_length_ = 0;
+  }
+}
+
+void Mmu::hdma_transfer_block() {
+  for (int i = 0; i < 0x10; ++i) {
+    std::uint8_t value = read_u8(hdma_source_);
+    write_u8(hdma_dest_, value);
+    hdma_source_ = static_cast<std::uint16_t>(hdma_source_ + 1);
+    hdma_dest_ = static_cast<std::uint16_t>(hdma_dest_ + 1);
+  }
+  if (hdma_length_ > 0) {
+    --hdma_length_;
+  }
+  if (hdma_length_ == 0) {
+    hdma_active_ = false;
+  }
 }
 
 } // namespace gbemu::core

@@ -163,7 +163,7 @@ bool EmulatorCore::save_state(std::vector<std::uint8_t>* out) const {
   out->push_back('B');
   out->push_back('S');
   out->push_back('T');
-  write_u16(*out, 2);
+  write_u16(*out, 3);
   write_u8(*out, static_cast<std::uint8_t>(system_));
   cpu_.serialize(out);
   mmu_.serialize(out);
@@ -185,7 +185,7 @@ bool EmulatorCore::load_state(const std::vector<std::uint8_t>& data, std::string
   std::size_t offset = 4;
   std::uint16_t version = 0;
   if (!read_u16(data, offset, version)) return false;
-  if (version != 2) {
+  if (version != 3) {
     if (error) *error = "Unsupported state version";
     return false;
   }

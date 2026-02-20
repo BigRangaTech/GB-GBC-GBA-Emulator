@@ -35,7 +35,6 @@ gbemu: \
   /lib/i386-linux-gnu/libasound.so.2 \
   /usr/lib/i386-linux-gnu/libasound.so.2 \
   /lib/x86_64-linux-gnu/libasound.so.2 \
-  /lib/x86_64-linux-gnu/libm.so.6 \
   /lib/i386-linux-gnu/libpulse.so.0 \
   /usr/lib/i386-linux-gnu/libpulse.so.0 \
   /lib/x86_64-linux-gnu/libpulse.so.0 \
@@ -219,8 +218,6 @@ CMakeFiles/gbemu.dir/main.cpp.o:
 /usr/lib/i386-linux-gnu/libasound.so.2:
 
 /lib/x86_64-linux-gnu/libasound.so.2:
-
-/lib/x86_64-linux-gnu/libm.so.6:
 
 /lib/i386-linux-gnu/libpulse.so.0:
 
