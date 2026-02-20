@@ -1,5 +1,7 @@
 add_library(gbemu_common
   common.cpp
+  config.cpp
+  rom.cpp
 )
 
 target_include_directories(gbemu_common

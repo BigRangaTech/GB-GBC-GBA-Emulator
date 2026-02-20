@@ -1,5 +1,7 @@
 add_library(gbemu_core
   core.cpp
+  ppu.cpp
+  ppu_backend.cpp
 )
 
 target_include_directories(gbemu_core
