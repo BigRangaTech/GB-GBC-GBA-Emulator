@@ -1,5 +1,7 @@
 add_library(gbemu_core
+  cpu.cpp
   core.cpp
+  mmu.cpp
   ppu.cpp
   ppu_backend.cpp
 )

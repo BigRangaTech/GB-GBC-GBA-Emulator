@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +88,130 @@ void test_ppu_sizes() {
          "GBA framebuffer should be 240x160");
 }
 
+void test_boot_rom_required() {
+  gbemu::core::EmulatorCore core;
+  core.set_system(gbemu::core::System::GB);
+  std::vector<std::uint8_t> rom = {0x00, 0x01, 0x02};
+  std::vector<std::uint8_t> boot_rom;
+  std::string error;
+  bool ok = core.load_rom(rom, boot_rom, &error);
+  expect(!ok, "core.load_rom should fail without boot ROM");
+}
+
+void test_boot_rom_size() {
+  gbemu::core::EmulatorCore core;
+  core.set_system(gbemu::core::System::GB);
+  std::vector<std::uint8_t> rom = {0x00, 0x01, 0x02};
+  std::vector<std::uint8_t> boot_rom(0x100, 0xFF);
+  std::string error;
+  bool ok = core.load_rom(rom, boot_rom, &error);
+  expect(ok, "core.load_rom should accept 0x100 boot ROM for GB");
+}
+
+std::string to_lower(std::string value) {
+  for (char& c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return value;
+}
+
+bool is_rom_extension(const std::filesystem::path& path) {
+  std::string ext = to_lower(path.extension().string());
+  return ext == ".gb" || ext == ".gbc" || ext == ".gba";
+}
+
+gbemu::core::System detect_system(const std::vector<std::uint8_t>& data) {
+  if (data.size() >= 0xC0 && data[0xB2] == 0x96) {
+    return gbemu::core::System::GBA;
+  }
+  if (data.size() >= 0x150) {
+    std::uint8_t cgb_flag = data[0x0143];
+    if (cgb_flag == 0x80 || cgb_flag == 0xC0) {
+      return gbemu::core::System::GBC;
+    }
+  }
+  return gbemu::core::System::GB;
+}
+
+std::string system_label(gbemu::core::System system) {
+  switch (system) {
+    case gbemu::core::System::GBA:
+      return "GBA";
+    case gbemu::core::System::GBC:
+      return "GBC";
+    case gbemu::core::System::GB:
+    default:
+      return "GB";
+  }
+}
+
+std::string rom_title(const std::vector<std::uint8_t>& data) {
+  if (data.size() >= 0xC0 && data[0xB2] == 0x96) {
+    std::string title;
+    for (std::size_t i = 0; i < 12; ++i) {
+      char c = static_cast<char>(data[0xA0 + i]);
+      if (c == '\0') break;
+      title.push_back(c);
+    }
+    return title;
+  }
+
+  if (data.size() >= 0x150) {
+    std::string title;
+    for (std::size_t i = 0; i < 16; ++i) {
+      char c = static_cast<char>(data[0x0134 + i]);
+      if (c == '\0') break;
+      title.push_back(c);
+    }
+    while (!title.empty() && title.back() == ' ') {
+      title.pop_back();
+    }
+    return title;
+  }
+
+  return "";
+}
+
+void scan_test_games() {
+  std::filesystem::path root("Test-Games");
+  if (!std::filesystem::exists(root)) {
+    std::cout << "Test-Games folder not found. Skipping ROM scan.\n";
+    return;
+  }
+
+  std::size_t count = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    if (!is_rom_extension(entry.path())) {
+      continue;
+    }
+
+    ++count;
+    std::vector<std::uint8_t> data;
+    std::string error;
+    std::string path = entry.path().string();
+    bool ok = gbemu::common::read_file(path, &data, &error);
+    expect(ok, "should read ROM: " + path);
+    expect(!data.empty(), "ROM should not be empty: " + path);
+
+    if (ok && !data.empty()) {
+      gbemu::core::System system = detect_system(data);
+      std::string title = rom_title(data);
+      std::cout << "ROM: " << system_label(system) << " | "
+                << (title.empty() ? "(no title)" : title) << " | "
+                << path << "\n";
+    }
+  }
+
+  if (count == 0) {
+    std::cout << "No ROMs found under Test-Games.\n";
+  } else {
+    std::cout << "Scanned " << count << " ROM(s) under Test-Games.\n";
+  }
+}
+
 } // namespace
 
 int main() {
@@ -94,6 +219,9 @@ int main() {
   test_read_file_roundtrip();
   test_config_parse();
   test_ppu_sizes();
+  test_boot_rom_required();
+  test_boot_rom_size();
+  scan_test_games();
 
   if (failures == 0) {
     std::cout << "All tests passed.\n";

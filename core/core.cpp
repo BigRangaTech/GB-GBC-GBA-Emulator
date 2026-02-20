@@ -53,4 +53,15 @@ std::string EmulatorCore::version() const {
   return gbemu::common::version();
 }
 
+bool EmulatorCore::load_rom(const std::vector<std::uint8_t>& rom,
+                            const std::vector<std::uint8_t>& boot_rom,
+                            std::string* error) {
+  if (!mmu_.load(system_, rom, boot_rom, error)) {
+    return false;
+  }
+  cpu_.connect(&mmu_);
+  cpu_.reset();
+  return true;
+}
+
 } // namespace gbemu::core

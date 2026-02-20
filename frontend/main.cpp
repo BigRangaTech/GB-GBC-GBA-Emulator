@@ -93,6 +93,10 @@ bool is_auto_system_value(std::string_view value) {
 struct Options {
   std::string rom_path;
   std::string config_path;
+  std::string boot_rom_path;
+  std::string boot_rom_gb;
+  std::string boot_rom_gbc;
+  std::string boot_rom_gba;
   std::optional<gbemu::core::System> system_override;
   std::optional<double> fps_override;
   std::optional<int> scale_override;
@@ -108,6 +112,10 @@ void print_usage(const char* exe) {
   std::cout << "  --fps <value>          Override target frame rate (0 to disable pacing)\n";
   std::cout << "  --scale <int>          Override window scale factor\n";
   std::cout << "  --video-driver <name>  Force SDL video driver (wayland or x11)\n";
+  std::cout << "  --boot-rom <path>      Boot ROM path (applies to the current ROM)\n";
+  std::cout << "  --boot-rom-gb <path>   Boot ROM path for GB\n";
+  std::cout << "  --boot-rom-gbc <path>  Boot ROM path for GBC\n";
+  std::cout << "  --boot-rom-gba <path>  Boot ROM path for GBA\n";
   std::cout << "  -h, --help             Show this help text\n";
 }
 
@@ -154,6 +162,23 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
     options->video_driver = driver;
   }
 
+  std::string boot_rom = config.get_string("boot_rom", "");
+  if (!boot_rom.empty()) {
+    options->boot_rom_path = boot_rom;
+  }
+  std::string boot_rom_gb = config.get_string("boot_rom_gb", "");
+  if (!boot_rom_gb.empty()) {
+    options->boot_rom_gb = boot_rom_gb;
+  }
+  std::string boot_rom_gbc = config.get_string("boot_rom_gbc", "");
+  if (!boot_rom_gbc.empty()) {
+    options->boot_rom_gbc = boot_rom_gbc;
+  }
+  std::string boot_rom_gba = config.get_string("boot_rom_gba", "");
+  if (!boot_rom_gba.empty()) {
+    options->boot_rom_gba = boot_rom_gba;
+  }
+
   return true;
 }
 
@@ -175,6 +200,108 @@ int default_scale(gbemu::core::System system) {
     return 3;
   }
   return 4;
+}
+
+std::string system_name(gbemu::core::System system) {
+  switch (system) {
+    case gbemu::core::System::GBA:
+      return "GBA";
+    case gbemu::core::System::GBC:
+      return "GBC";
+    case gbemu::core::System::GB:
+    default:
+      return "GB";
+  }
+}
+
+bool read_boot_rom(const std::string& path,
+                   std::vector<std::uint8_t>* out,
+                   std::string* error) {
+  if (path.empty()) {
+    if (error) {
+      *error = "Boot ROM path is empty";
+    }
+    return false;
+  }
+  if (!gbemu::common::read_file(path, out, error)) {
+    if (error && error->empty()) {
+      *error = "Failed to read boot ROM";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool load_boot_rom_from_candidates(const std::vector<std::string>& candidates,
+                                   std::vector<std::uint8_t>* out,
+                                   std::string* error) {
+  std::string last_error;
+  for (const auto& path : candidates) {
+    std::vector<std::uint8_t> data;
+    std::string local_error;
+    if (read_boot_rom(path, &data, &local_error)) {
+      *out = std::move(data);
+      return true;
+    }
+    last_error = local_error.empty() ? "Failed to read boot ROM" : local_error;
+  }
+  if (error) {
+    *error = last_error.empty() ? "Boot ROM not found" : last_error;
+  }
+  return false;
+}
+
+bool load_boot_rom(gbemu::core::System system,
+                   const Options& options,
+                   std::vector<std::uint8_t>* out,
+                   std::string* error) {
+  if (!out) {
+    return false;
+  }
+
+  if (!options.boot_rom_path.empty()) {
+    if (!read_boot_rom(options.boot_rom_path, out, error)) {
+      return false;
+    }
+    return true;
+  }
+
+  if (system == gbemu::core::System::GB && !options.boot_rom_gb.empty()) {
+    return read_boot_rom(options.boot_rom_gb, out, error);
+  }
+  if (system == gbemu::core::System::GBC && !options.boot_rom_gbc.empty()) {
+    return read_boot_rom(options.boot_rom_gbc, out, error);
+  }
+  if (system == gbemu::core::System::GBA && !options.boot_rom_gba.empty()) {
+    return read_boot_rom(options.boot_rom_gba, out, error);
+  }
+
+  std::vector<std::string> candidates;
+  if (system == gbemu::core::System::GB) {
+    candidates = {
+        "firmware/dmg_boot.bin",
+        "firmware/gb_boot.bin",
+        "firmware/boot.gb",
+        "firmware/boot.bin",
+        "firmware/bootrom.bin",
+    };
+  } else if (system == gbemu::core::System::GBC) {
+    candidates = {
+        "firmware/cgb_boot.bin",
+        "firmware/gbc_boot.bin",
+        "firmware/boot.gbc",
+        "firmware/boot.bin",
+        "firmware/bootrom.bin",
+    };
+  } else {
+    candidates = {
+        "firmware/gba_bios.bin",
+        "firmware/gba_boot.bin",
+        "firmware/bios.bin",
+    };
+  }
+
+  return load_boot_rom_from_candidates(candidates, out, error);
 }
 
 class FramePacer {
@@ -356,6 +483,30 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.config_path = argv[++i];
+    } else if (arg == "--boot-rom") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom\n";
+        return 1;
+      }
+      options.boot_rom_path = argv[++i];
+    } else if (arg == "--boot-rom-gb") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom-gb\n";
+        return 1;
+      }
+      options.boot_rom_gb = argv[++i];
+    } else if (arg == "--boot-rom-gbc") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom-gbc\n";
+        return 1;
+      }
+      options.boot_rom_gbc = argv[++i];
+    } else if (arg == "--boot-rom-gba") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom-gba\n";
+        return 1;
+      }
+      options.boot_rom_gba = argv[++i];
     }
   }
 
@@ -380,6 +531,30 @@ int main(int argc, char** argv) {
         return 1;
       }
       ++i;
+    } else if (arg == "--boot-rom") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom\n";
+        return 1;
+      }
+      options.boot_rom_path = argv[++i];
+    } else if (arg == "--boot-rom-gb") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom-gb\n";
+        return 1;
+      }
+      options.boot_rom_gb = argv[++i];
+    } else if (arg == "--boot-rom-gbc") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom-gbc\n";
+        return 1;
+      }
+      options.boot_rom_gbc = argv[++i];
+    } else if (arg == "--boot-rom-gba") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --boot-rom-gba\n";
+        return 1;
+      }
+      options.boot_rom_gba = argv[++i];
     } else if (arg == "--system") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --system\n";
@@ -466,6 +641,20 @@ int main(int argc, char** argv) {
   gbemu::core::System detected_system = detect_system(rom);
   gbemu::core::System system = options.system_override.value_or(detected_system);
   core.set_system(system);
+
+  std::vector<std::uint8_t> boot_rom;
+  std::string boot_error;
+  if (!load_boot_rom(system, options, &boot_rom, &boot_error)) {
+    std::cout << "Boot ROM required for " << system_name(system) << " but not found. "
+              << boot_error << "\n";
+    return 1;
+  }
+
+  std::string load_error;
+  if (!core.load_rom(rom, boot_rom, &load_error)) {
+    std::cout << "Failed to load ROM into core: " << load_error << "\n";
+    return 1;
+  }
 
   if (system == gbemu::core::System::GBA) {
     print_gba_header(rom);
