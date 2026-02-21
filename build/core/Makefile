@@ -212,6 +212,78 @@ cpu.cpp.s:
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/cpu.cpp.s
 .PHONY : cpu.cpp.s
 
+gba_bus.o: gba_bus.cpp.o
+.PHONY : gba_bus.o
+
+# target to build an object file
+gba_bus.cpp.o:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o
+.PHONY : gba_bus.cpp.o
+
+gba_bus.i: gba_bus.cpp.i
+.PHONY : gba_bus.i
+
+# target to preprocess a source file
+gba_bus.cpp.i:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.i
+.PHONY : gba_bus.cpp.i
+
+gba_bus.s: gba_bus.cpp.s
+.PHONY : gba_bus.s
+
+# target to generate assembly for a file
+gba_bus.cpp.s:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.s
+.PHONY : gba_bus.cpp.s
+
+gba_core.o: gba_core.cpp.o
+.PHONY : gba_core.o
+
+# target to build an object file
+gba_core.cpp.o:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o
+.PHONY : gba_core.cpp.o
+
+gba_core.i: gba_core.cpp.i
+.PHONY : gba_core.i
+
+# target to preprocess a source file
+gba_core.cpp.i:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_core.cpp.i
+.PHONY : gba_core.cpp.i
+
+gba_core.s: gba_core.cpp.s
+.PHONY : gba_core.s
+
+# target to generate assembly for a file
+gba_core.cpp.s:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_core.cpp.s
+.PHONY : gba_core.cpp.s
+
+gba_cpu.o: gba_cpu.cpp.o
+.PHONY : gba_cpu.o
+
+# target to build an object file
+gba_cpu.cpp.o:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o
+.PHONY : gba_cpu.cpp.o
+
+gba_cpu.i: gba_cpu.cpp.i
+.PHONY : gba_cpu.i
+
+# target to preprocess a source file
+gba_cpu.cpp.i:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.i
+.PHONY : gba_cpu.cpp.i
+
+gba_cpu.s: gba_cpu.cpp.s
+.PHONY : gba_cpu.s
+
+# target to generate assembly for a file
+gba_cpu.cpp.s:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build && $(MAKE) $(MAKESILENT) -f core/CMakeFiles/gbemu_core.dir/build.make core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.s
+.PHONY : gba_cpu.cpp.s
+
 mmu.o: mmu.cpp.o
 .PHONY : mmu.o
 
@@ -303,6 +375,15 @@ help:
 	@echo "... cpu.o"
 	@echo "... cpu.i"
 	@echo "... cpu.s"
+	@echo "... gba_bus.o"
+	@echo "... gba_bus.i"
+	@echo "... gba_bus.s"
+	@echo "... gba_core.o"
+	@echo "... gba_core.i"
+	@echo "... gba_core.s"
+	@echo "... gba_cpu.o"
+	@echo "... gba_cpu.i"
+	@echo "... gba_cpu.s"
 	@echo "... mmu.o"
 	@echo "... mmu.i"
 	@echo "... mmu.s"

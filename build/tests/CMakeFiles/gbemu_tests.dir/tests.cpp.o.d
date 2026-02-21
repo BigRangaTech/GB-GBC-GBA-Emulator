@@ -214,6 +214,9 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: \
  /usr/include/c++/15/array \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/system.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/cpu.h \
+ /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.h \
+ /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
+ /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.h \
  /usr/include/c++/15/memory /usr/include/c++/15/bits/stl_tempbuf.h \
  /usr/include/c++/15/bits/stl_raw_storage_iter.h \

@@ -2,6 +2,9 @@ add_library(gbemu_core
   apu.cpp
   cpu.cpp
   core.cpp
+  gba_bus.cpp
+  gba_core.cpp
+  gba_cpu.cpp
   mmu.cpp
   ppu.cpp
   ppu_backend.cpp

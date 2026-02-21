@@ -8,6 +8,9 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/apu.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/cpu.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu_backend.h \
@@ -671,8 +674,6 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/lib/i386-linux-gnu/libogg.so.0:
 
-/usr/lib/i386-linux-gnu/libgbm.so.1:
-
 /usr/lib/i386-linux-gnu/libexpat.so.1:
 
 /usr/lib/i386-linux-gnu/libdrm.so.2:
@@ -771,7 +772,9 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /lib/i386-linux-gnu/libpulse.so.0:
 
-/usr/include/features.h:
+/lib/i386-linux-gnu/libopus.so.0:
+
+/lib/i386-linux-gnu/libmpg123.so.0:
 
 /usr/include/c++/15/cstddef:
 
@@ -790,8 +793,6 @@ frontend/gbemu: common/libgbemu_common.a \
 /usr/include/c++/15/pstl/glue_algorithm_defs.h:
 
 /usr/include/x86_64-linux-gnu/sys/cdefs.h:
-
-/usr/include/inttypes.h:
 
 /usr/include/c++/15/tr1/bessel_function.tcc:
 
@@ -907,6 +908,10 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/bits/ranges_algobase.h:
 
+/lib/i386-linux-gnu/libogg.so.0:
+
+/usr/include/c++/15/bits/ptr_traits.h:
+
 /usr/lib/gcc/x86_64-linux-gnu/15/include/x86gprintrin.h:
 
 /lib/x86_64-linux-gnu/libXi.so.6:
@@ -967,19 +972,17 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmavlintrin.h:
 
-/usr/include/SDL2/begin_code.h:
+/usr/include/c++/15/pstl/glue_memory_defs.h:
 
-/usr/include/x86_64-linux-gnu/asm/posix_types.h:
+/usr/include/c++/15/bits/node_handle.h:
 
-/usr/include/c++/15/bits/streambuf.tcc:
+/usr/include/c++/15/unordered_set:
 
-/usr/include/c++/15/bits/basic_string.tcc:
+/lib/i386-linux-gnu/libmp3lame.so.0:
 
-/usr/include/SDL2/SDL_timer.h:
+/usr/include/x86_64-linux-gnu/sys/single_threaded.h:
 
-/usr/include/x86_64-linux-gnu/bits/uintn-identity.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/prfchwintrin.h:
+core/libgbemu_core.a:
 
 /usr/include/SDL2/SDL_system.h:
 
@@ -1003,49 +1006,11 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/SDL2/SDL_stdinc.h:
 
-/lib/i386-linux-gnu/libapparmor.so.1:
-
-/lib/x86_64-linux-gnu/libasound.so.2:
-
-/lib/i386-linux-gnu/libgbm.so.1:
-
-/usr/include/SDL2/SDL_shape.h:
-
-/usr/include/SDL2/SDL_quit.h:
-
-/usr/include/SDL2/SDL_rwops.h:
-
-/usr/include/c++/15/bits/shared_ptr_base.h:
-
-/usr/lib/i386-linux-gnu/libmp3lame.so.0:
-
-/usr/include/c++/15/bits/stl_uninitialized.h:
-
-/usr/include/SDL2/SDL_atomic.h:
-
-/usr/include/c++/15/bits/enable_special_members.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/amxtf32intrin.h:
-
-/usr/include/c++/15/bits/ranges_uninitialized.h:
-
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu_backend.h:
 
-/usr/include/SDL2/SDL_render.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o:
-
-/usr/include/SDL2/SDL_blendmode.h:
-
-/usr/include/c++/15/cctype:
-
-/usr/include/c++/15/bits/char_traits.h:
-
-/usr/include/c++/15/bits/stl_iterator_base_funcs.h:
-
-/lib/i386-linux-gnu/libXrandr.so.2:
-
 /usr/include/SDL2/SDL_platform.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.h:
 
 /usr/lib/i386-linux-gnu/libmpg123.so.0:
 
@@ -1069,61 +1034,7 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/SDL2/SDL_locale.h:
 
-/usr/include/SDL2/SDL_video.h:
-
-/usr/include/SDL2/SDL_rect.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/clzerointrin.h:
-
-/usr/include/SDL2/SDL_loadso.h:
-
-/usr/include/c++/15/bits/locale_facets_nonio.tcc:
-
-/usr/include/c++/15/bits/stringfwd.h:
-
-/usr/include/c++/15/bits/std_mutex.h:
-
-/usr/include/c++/15/bits/erase_if.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmiintrin.h:
-
-/usr/include/c++/15/bits/fs_path.h:
-
 /usr/include/c++/15/tr1/modified_bessel_func.tcc:
-
-/usr/include/SDL2/SDL_assert.h:
-
-/usr/include/c++/15/pstl/pstl_config.h:
-
-/usr/include/c++/15/bits/basic_ios.tcc:
-
-/lib/i386-linux-gnu/libvorbisenc.so.2:
-
-/usr/include/SDL2/SDL.h:
-
-/usr/lib/i386-linux-gnu/libasyncns.so.0:
-
-/usr/include/c++/15/ext/string_conversions.h:
-
-/usr/include/c++/15/bits/hashtable_policy.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512cdintrin.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/system.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/amxcomplexintrin.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/common/input.h:
-
-/lib/i386-linux-gnu/libxkbcommon.so.0:
-
-/usr/include/alloca.h:
-
-/usr/include/c++/15/ext/atomicity.h:
-
-/usr/include/c++/15/ext/concurrence.h:
 
 /usr/include/c++/15/bits/exception_ptr.h:
 
@@ -1139,11 +1050,95 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/x86_64-linux-gnu/bits/errno.h:
 
-/usr/include/linux/stddef.h:
+/usr/include/SDL2/SDL_quit.h:
 
-/usr/include/c++/15/stdlib.h:
+/usr/include/SDL2/SDL_shape.h:
 
-/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectvlintrin.h:
+/usr/include/SDL2/SDL_haptic.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxfp8intrin.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.h:
+
+/usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:
+
+/usr/include/SDL2/SDL_loadso.h:
+
+/usr/include/c++/15/bits/locale_facets_nonio.tcc:
+
+/usr/include/c++/15/bits/stringfwd.h:
+
+/usr/include/c++/15/bits/std_mutex.h:
+
+/usr/include/c++/15/bits/erase_if.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmiintrin.h:
+
+/usr/include/c++/15/iomanip:
+
+/usr/include/c++/15/bits/shared_ptr.h:
+
+/usr/include/c++/15/bits/fs_path.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h:
+
+/usr/include/c++/15/bits/refwrap.h:
+
+/usr/include/SDL2/SDL_misc.h:
+
+/usr/include/c++/15/numbers:
+
+/usr/include/c++/15/backward/binders.h:
+
+/usr/include/c++/15/exception:
+
+/lib/i386-linux-gnu/libapparmor.so.1:
+
+/lib/x86_64-linux-gnu/libasound.so.2:
+
+/lib/i386-linux-gnu/libgbm.so.1:
+
+/usr/include/SDL2/SDL_rwops.h:
+
+/usr/include/c++/15/bits/shared_ptr_base.h:
+
+/usr/lib/i386-linux-gnu/libmp3lame.so.0:
+
+/usr/include/c++/15/bits/stl_uninitialized.h:
+
+/usr/include/SDL2/SDL_atomic.h:
+
+/usr/include/c++/15/bits/enable_special_members.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxtf32intrin.h:
+
+/usr/include/c++/15/bits/ranges_uninitialized.h:
+
+/usr/include/SDL2/SDL_render.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o:
+
+/usr/include/SDL2/SDL_blendmode.h:
+
+/usr/include/c++/15/cctype:
+
+/usr/include/c++/15/bits/char_traits.h:
+
+/usr/include/c++/15/ext/concurrence.h:
+
+/usr/include/c++/15/ext/atomicity.h:
+
+/usr/include/c++/15/bits/stl_iterator_base_funcs.h:
+
+/lib/i386-linux-gnu/libXrandr.so.2:
+
+/usr/lib/i386-linux-gnu/libgbm.so.1:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h:
+
+/usr/include/c++/15/bits/version.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxcomplexintrin.h:
 
 /usr/include/c++/15/bits/stl_raw_storage_iter.h:
 
@@ -1163,33 +1158,31 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.h:
 
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.h:
+/usr/include/c++/15/bits/basic_string.tcc:
 
-/usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:
+/usr/include/c++/15/bits/streambuf.tcc:
 
-/usr/include/SDL2/SDL_haptic.h:
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.h:
 
-/usr/lib/gcc/x86_64-linux-gnu/15/include/amxfp8intrin.h:
+/home/jessie/Documents/GB-GBC-GBA-Emulator/common/input.h:
+
+/lib/i386-linux-gnu/libxkbcommon.so.0:
+
+/usr/include/alloca.h:
+
+/usr/lib/i386-linux-gnu/libasyncns.so.0:
+
+/usr/include/c++/15/ext/string_conversions.h:
+
+/usr/include/c++/15/bits/hashtable_policy.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512cdintrin.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/system.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/ctype_inline.h:
 
 /usr/include/SDL2/SDL_power.h:
-
-/usr/include/c++/15/bits/refwrap.h:
-
-/usr/include/SDL2/SDL_misc.h:
-
-/usr/include/c++/15/numbers:
-
-/usr/include/c++/15/backward/binders.h:
-
-/usr/include/c++/15/exception:
-
-/usr/include/SDL2/SDL_audio.h:
-
-/usr/lib/i386-linux-gnu/libffi.so.8:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/amxavx512intrin.h:
 
 /usr/include/SDL2/SDL_main.h:
 
@@ -1201,6 +1194,12 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/ctype_base.h:
 
+/usr/include/SDL2/SDL_audio.h:
+
+/usr/lib/i386-linux-gnu/libffi.so.8:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxavx512intrin.h:
+
 /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/main.cpp:
 
 /usr/include/SDL2/SDL_sensor.h:
@@ -1209,17 +1208,37 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/c++/15/bits/istream.tcc:
 
+/lib/i386-linux-gnu/libvorbisenc.so.2:
+
+/usr/include/SDL2/SDL.h:
+
+/usr/include/SDL2/SDL_assert.h:
+
+/usr/include/c++/15/pstl/pstl_config.h:
+
+/usr/include/c++/15/bits/basic_ios.tcc:
+
+/usr/include/SDL2/SDL_timer.h:
+
+/usr/include/x86_64-linux-gnu/bits/uintn-identity.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/prfchwintrin.h:
+
+/usr/include/SDL2/begin_code.h:
+
+/usr/include/x86_64-linux-gnu/asm/posix_types.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/hresetintrin.h:
+
+/usr/include/c++/15/bits/unique_ptr.h:
+
+/usr/include/c++/15/bits/move.h:
+
+/usr/include/SDL2/SDL_keyboard.h:
+
 /usr/include/SDL2/SDL_cpuinfo.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/gthr.h:
-
-/usr/include/x86_64-linux-gnu/c++/15/bits/gthr-default.h:
-
-/usr/include/SDL2/SDL_mouse.h:
-
-/usr/include/SDL2/SDL_gamecontroller.h:
-
-/usr/include/x86_64-linux-gnu/bits/types/timer_t.h:
 
 /usr/include/c++/15/bits/ostream.tcc:
 
@@ -1231,21 +1250,31 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/avxintrin.h:
 
-/usr/lib/gcc/x86_64-linux-gnu/15/include/hresetintrin.h:
+/usr/include/x86_64-linux-gnu/c++/15/bits/gthr-default.h:
 
-/usr/include/c++/15/bits/unique_ptr.h:
+/usr/include/SDL2/SDL_mouse.h:
 
-/usr/include/c++/15/bits/move.h:
+/usr/include/SDL2/SDL_gamecontroller.h:
 
-/usr/include/SDL2/SDL_keyboard.h:
+/usr/include/x86_64-linux-gnu/bits/types/timer_t.h:
+
+/usr/include/linux/stddef.h:
+
+/usr/include/c++/15/stdlib.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectvlintrin.h:
+
+/usr/include/SDL2/SDL_rect.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/clzerointrin.h:
+
+/usr/include/SDL2/SDL_video.h:
 
 /usr/include/c++/15/istream:
 
 /usr/include/c++/15/utility:
 
 /usr/include/SDL2/SDL_error.h:
-
-/usr/include/c++/15/bits/version.h:
 
 /usr/include/c++/15/bits/concept_check.h:
 
@@ -1285,6 +1314,10 @@ frontend/gbemu: common/libgbemu_common.a \
 
 /usr/include/x86_64-linux-gnu/bits/math-vector.h:
 
+/usr/include/x86_64-linux-gnu/c++/15/bits/c++locale.h:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniintrin.h:
+
 /usr/include/c++/15/bits/fs_ops.h:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/include/mwaitintrin.h:
@@ -1300,14 +1333,6 @@ frontend/gbemu: common/libgbemu_common.a \
 /lib/x86_64-linux-gnu/libsndfile.so.1:
 
 /usr/include/x86_64-linux-gnu/bits/uio_lim.h:
-
-/usr/include/c++/15/bits/shared_ptr.h:
-
-/usr/include/c++/15/iomanip:
-
-/usr/include/x86_64-linux-gnu/sys/single_threaded.h:
-
-core/libgbemu_core.a:
 
 /usr/include/c++/15/ext/type_traits.h:
 
@@ -1349,11 +1374,17 @@ core/libgbemu_core.a:
 
 /usr/include/c++/15/bits/fstream.tcc:
 
-/usr/include/c++/15/bits/invoke.h:
+/usr/include/c++/15/bits/nested_exception.h:
 
 /usr/include/c++/15/bits/memoryfwd.h:
 
-/usr/include/c++/15/bits/nested_exception.h:
+/usr/include/c++/15/bits/invoke.h:
+
+/usr/include/c++/15/bits/uses_allocator.h:
+
+/usr/include/c++/15/bits/new_allocator.h:
+
+/usr/include/x86_64-linux-gnu/c++/15/bits/os_defines.h:
 
 /lib/x86_64-linux-gnu/libwayland-cursor.so.0:
 
@@ -1389,23 +1420,9 @@ core/libgbemu_core.a:
 
 /usr/include/c++/15/bits/memory_resource.h:
 
-/usr/include/c++/15/bits/uses_allocator.h:
+/usr/include/features.h:
 
-/usr/include/c++/15/bits/new_allocator.h:
-
-/usr/include/x86_64-linux-gnu/c++/15/bits/os_defines.h:
-
-/usr/include/c++/15/pstl/glue_memory_defs.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniintrin.h:
-
-/usr/include/x86_64-linux-gnu/c++/15/bits/c++locale.h:
-
-/usr/include/c++/15/bits/node_handle.h:
-
-/usr/include/c++/15/unordered_set:
-
-/lib/i386-linux-gnu/libmp3lame.so.0:
+/usr/include/inttypes.h:
 
 /usr/include/x86_64-linux-gnu/bits/thread-shared-types.h:
 
@@ -1617,9 +1634,9 @@ core/libgbemu_core.a:
 
 /usr/include/x86_64-linux-gnu/bits/types/cookie_io_functions_t.h:
 
-/usr/include/features-time64.h:
-
 /usr/include/SDL2/SDL_pixels.h:
+
+/usr/include/features-time64.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/locale_t.h:
 
@@ -1690,10 +1707,6 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o:
 /usr/include/x86_64-linux-gnu/gnu/stubs-64.h:
 
 /lib/i386-linux-gnu/libXi.so.6:
-
-/usr/include/c++/15/bits/ptr_traits.h:
-
-/lib/i386-linux-gnu/libogg.so.0:
 
 /usr/lib/x86_64-linux-gnu/libgcc_s.so.1:
 
@@ -1934,7 +1947,3 @@ common/libgbemu_common.a:
 /lib/i386-linux-gnu/libdbus-1.so.3:
 
 /lib/i386-linux-gnu/libdrm.so.2:
-
-/lib/i386-linux-gnu/libmpg123.so.0:
-
-/lib/i386-linux-gnu/libopus.so.0:

@@ -6,6 +6,7 @@
 
 #include "apu.h"
 #include "cpu.h"
+#include "gba_core.h"
 #include "ppu.h"
 #include "system.h"
 #include "mmu.h"
@@ -54,11 +55,12 @@ class EmulatorCore {
                 std::string* error);
 
  private:
-  System system_ = System::GB;
-  Ppu ppu_;
-  Mmu mmu_;
-  Cpu cpu_;
-  Apu apu_;
+ System system_ = System::GB;
+ GbaCore gba_;
+ Ppu ppu_;
+ Mmu mmu_;
+ Cpu cpu_;
+ Apu apu_;
 };
 
 } // namespace gbemu::core

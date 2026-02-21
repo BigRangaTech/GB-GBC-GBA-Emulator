@@ -48,6 +48,7 @@ class Mmu {
  private:
   enum class MbcType {
     None,
+    MBC2,
     MBC1,
     MBC3,
     MBC5,
@@ -59,6 +60,7 @@ class Mmu {
   int effective_rom_bank() const;
   int effective_ram_bank() const;
   int effective_wram_bank() const;
+  void timer_tick();
   void hdma_start(std::uint8_t value);
   void hdma_transfer_block();
 
@@ -81,6 +83,8 @@ class Mmu {
   std::uint8_t tac_ = 0;
   int div_counter_ = 0;
   int timer_counter_ = 0;
+  bool tima_reload_pending_ = false;
+  int tima_reload_delay_ = 0;
 
   MbcType mbc_type_ = MbcType::None;
   std::uint8_t cart_type_ = 0;

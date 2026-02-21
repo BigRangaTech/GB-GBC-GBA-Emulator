@@ -71,6 +71,24 @@ std::int64_t seconds_from_rtc_regs(const std::array<std::uint8_t, 5>& regs) {
   return days * 86400 + hours * 3600 + minutes * 60 + seconds;
 }
 
+int timer_bit_select(std::uint8_t tac) {
+  switch (tac & 0x03) {
+    case 0x00: return 9;
+    case 0x01: return 3;
+    case 0x02: return 5;
+    case 0x03: return 7;
+    default: return 9;
+  }
+}
+
+bool timer_signal(std::uint16_t div, std::uint8_t tac) {
+  if ((tac & 0x04) == 0) {
+    return false;
+  }
+  int bit = timer_bit_select(tac);
+  return (div & (1u << bit)) != 0;
+}
+
 } // namespace
 
 bool Mmu::load(System system,
@@ -141,6 +159,10 @@ bool Mmu::load(System system,
       case 0x00:
         mbc_type_ = MbcType::None;
         break;
+      case 0x05:
+      case 0x06:
+        mbc_type_ = MbcType::MBC2;
+        break;
       case 0x01:
       case 0x02:
       case 0x03:
@@ -172,10 +194,17 @@ bool Mmu::load(System system,
     rom_banks_ = static_cast<int>((rom_.size() + 0x3FFF) / 0x4000);
   }
   ram_banks_ = ram_banks_from_code(ram_size_code_);
+  if (mbc_type_ == MbcType::MBC2) {
+    ram_banks_ = 1;
+  }
 
   vram_.assign(system_ == System::GBC ? 0x4000 : 0x2000, 0);
   wram_.assign(system_ == System::GBC ? 0x8000 : 0x2000, 0);
-  eram_.assign(static_cast<std::size_t>(ram_banks_ * 0x2000), 0);
+  if (mbc_type_ == MbcType::MBC2) {
+    eram_.assign(0x200, 0);
+  } else {
+    eram_.assign(static_cast<std::size_t>(ram_banks_ * 0x2000), 0);
+  }
   oam_.assign(0xA0, 0);
   io_.assign(0x80, 0);
   hram_.assign(0x7F, 0);
@@ -186,6 +215,8 @@ bool Mmu::load(System system,
   tac_ = 0;
   div_counter_ = 0;
   timer_counter_ = 0;
+  tima_reload_pending_ = false;
+  tima_reload_delay_ = 0;
 
   return true;
 }
@@ -195,32 +226,35 @@ void Mmu::step(int cycles) {
     return;
   }
 
-  div_counter_ += cycles;
-  while (div_counter_ >= 256) {
-    div_counter_ -= 256;
-    div_ = static_cast<std::uint8_t>(div_ + 1);
-  }
-
-  if (tac_ & 0x04) {
-    int period = 1024;
-    switch (tac_ & 0x03) {
-      case 0x00: period = 1024; break;
-      case 0x01: period = 16; break;
-      case 0x02: period = 64; break;
-      case 0x03: period = 256; break;
-      default: break;
+  for (int i = 0; i < cycles; ++i) {
+    bool old_signal = timer_signal(static_cast<std::uint16_t>(div_counter_), tac_);
+    div_counter_ = (div_counter_ + 1) & 0xFFFF;
+    div_ = static_cast<std::uint8_t>((div_counter_ >> 8) & 0xFF);
+    bool new_signal = timer_signal(static_cast<std::uint16_t>(div_counter_), tac_);
+    if (old_signal && !new_signal) {
+      timer_tick();
     }
-
-    timer_counter_ += cycles;
-    while (timer_counter_ >= period) {
-      timer_counter_ -= period;
-      if (tima_ == 0xFF) {
+    if (tima_reload_pending_) {
+      --tima_reload_delay_;
+      if (tima_reload_delay_ <= 0) {
         tima_ = tma_;
         request_interrupt(2);
-      } else {
-        tima_ = static_cast<std::uint8_t>(tima_ + 1);
+        tima_reload_pending_ = false;
       }
     }
+  }
+}
+
+void Mmu::timer_tick() {
+  if (tima_reload_pending_) {
+    return;
+  }
+  if (tima_ == 0xFF) {
+    tima_ = 0x00;
+    tima_reload_pending_ = true;
+    tima_reload_delay_ = 4;
+  } else {
+    tima_ = static_cast<std::uint8_t>(tima_ + 1);
   }
 }
 
@@ -243,6 +277,16 @@ std::uint8_t Mmu::read_u8(std::uint16_t address) const {
           rtc_halt_ ? rtc_offset_seconds_
                     : rtc_offset_seconds_ + static_cast<std::int64_t>(std::time(nullptr)) - rtc_base_time_);
       return regs[ram_bank_ - 0x08];
+    }
+    if (mbc_type_ == MbcType::MBC2) {
+      if (!ram_enabled_ || eram_.empty()) {
+        return 0xFF;
+      }
+      std::size_t offset = static_cast<std::size_t>((address - 0xA000) & 0x01FF);
+      if (offset < eram_.size()) {
+        return static_cast<std::uint8_t>(0xF0 | (eram_[offset] & 0x0F));
+      }
+      return 0xFF;
     }
     if (!ram_enabled_ || eram_.empty()) {
       return 0xFF;
@@ -348,6 +392,21 @@ std::uint8_t Mmu::read_u8(std::uint16_t address) const {
 
 void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
   if (address < 0x8000) {
+    if (mbc_type_ == MbcType::MBC2) {
+      if (address < 0x2000) {
+        if ((address & 0x0100) == 0) {
+          ram_enabled_ = ((value & 0x0F) == 0x0A);
+        }
+      } else if (address < 0x4000) {
+        if ((address & 0x0100) != 0) {
+          rom_bank_low_ = static_cast<std::uint8_t>(value & 0x0F);
+          if (rom_bank_low_ == 0) {
+            rom_bank_low_ = 1;
+          }
+        }
+      }
+      return;
+    }
     if (mbc_type_ == MbcType::MBC1) {
       if (address < 0x2000) {
         ram_enabled_ = ((value & 0x0F) == 0x0A);
@@ -422,6 +481,16 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
       rtc_latch_ = regs;
       return;
     }
+    if (mbc_type_ == MbcType::MBC2) {
+      if (!ram_enabled_ || eram_.empty()) {
+        return;
+      }
+      std::size_t offset = static_cast<std::size_t>((address - 0xA000) & 0x01FF);
+      if (offset < eram_.size()) {
+        eram_[offset] = static_cast<std::uint8_t>(value & 0x0F);
+      }
+      return;
+    }
     if (!ram_enabled_ || eram_.empty()) {
       return;
     }
@@ -470,17 +539,32 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
     std::uint16_t index = address - 0xFF00;
     switch (address) {
       case 0xFF04:
-        div_ = 0;
-        div_counter_ = 0;
+        {
+          bool old_signal = timer_signal(static_cast<std::uint16_t>(div_counter_), tac_);
+          div_counter_ = 0;
+          div_ = 0;
+          bool new_signal = timer_signal(static_cast<std::uint16_t>(div_counter_), tac_);
+          if (old_signal && !new_signal) {
+            timer_tick();
+          }
+        }
         break;
       case 0xFF05:
         tima_ = value;
+        tima_reload_pending_ = false;
         break;
       case 0xFF06:
         tma_ = value;
         break;
       case 0xFF07:
-        tac_ = static_cast<std::uint8_t>(value & 0x07);
+        {
+          bool old_signal = timer_signal(static_cast<std::uint16_t>(div_counter_), tac_);
+          tac_ = static_cast<std::uint8_t>(value & 0x07);
+          bool new_signal = timer_signal(static_cast<std::uint16_t>(div_counter_), tac_);
+          if (old_signal && !new_signal) {
+            timer_tick();
+          }
+        }
         break;
       case 0xFF46: {
         io_[0x46] = value;
@@ -568,6 +652,33 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
         break;
       case 0xFF44:
         io_[0x44] = 0;
+        {
+          bool match = (io_[0x45] == 0);
+          bool old = (io_[0x41] & 0x04) != 0;
+          if (match) {
+            io_[0x41] = static_cast<std::uint8_t>(io_[0x41] | 0x04);
+            if (!old && (io_[0x41] & 0x40)) {
+              request_interrupt(1);
+            }
+          } else {
+            io_[0x41] = static_cast<std::uint8_t>(io_[0x41] & ~0x04);
+          }
+        }
+        break;
+      case 0xFF45:
+        io_[0x45] = value;
+        {
+          bool match = (io_[0x44] == io_[0x45]);
+          bool old = (io_[0x41] & 0x04) != 0;
+          if (match) {
+            io_[0x41] = static_cast<std::uint8_t>(io_[0x41] | 0x04);
+            if (!old && (io_[0x41] & 0x40)) {
+              request_interrupt(1);
+            }
+          } else {
+            io_[0x41] = static_cast<std::uint8_t>(io_[0x41] & ~0x04);
+          }
+        }
         break;
       case 0xFF0F:
         io_[0x0F] = value;
@@ -684,6 +795,8 @@ void Mmu::serialize(std::vector<std::uint8_t>* out) const {
   state_io::write_u8(*out, tac_);
   state_io::write_u32(*out, static_cast<std::uint32_t>(div_counter_));
   state_io::write_u32(*out, static_cast<std::uint32_t>(timer_counter_));
+  state_io::write_bool(*out, tima_reload_pending_);
+  state_io::write_u32(*out, static_cast<std::uint32_t>(tima_reload_delay_));
 
   state_io::write_u8(*out, joypad_state_);
 
@@ -748,6 +861,9 @@ bool Mmu::deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset
   div_counter_ = static_cast<int>(v32);
   if (!state_io::read_u32(data, offset, v32)) return false;
   timer_counter_ = static_cast<int>(v32);
+  if (!state_io::read_bool(data, offset, tima_reload_pending_)) return false;
+  if (!state_io::read_u32(data, offset, v32)) return false;
+  tima_reload_delay_ = static_cast<int>(v32);
 
   if (!state_io::read_u8(data, offset, joypad_state_)) return false;
 
@@ -926,7 +1042,13 @@ int Mmu::ram_banks_from_code(std::uint8_t code) const {
 
 int Mmu::effective_rom_bank() const {
   int bank = 1;
-  if (mbc_type_ == MbcType::MBC1) {
+  if (mbc_type_ == MbcType::MBC2) {
+    int combined = rom_bank_low_ & 0x0F;
+    if (combined == 0) {
+      combined = 1;
+    }
+    bank = combined;
+  } else if (mbc_type_ == MbcType::MBC1) {
     int combined = (rom_bank_high_ << 5) | (rom_bank_low_ & 0x1F);
     if (combined == 0) {
       combined = 1;
@@ -951,6 +1073,9 @@ int Mmu::effective_rom_bank() const {
 
 int Mmu::effective_ram_bank() const {
   if (ram_banks_ <= 1) {
+    return 0;
+  }
+  if (mbc_type_ == MbcType::MBC2) {
     return 0;
   }
   if (mbc_type_ == MbcType::MBC1) {

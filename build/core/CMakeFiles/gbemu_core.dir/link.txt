@@ -1,2 +1,2 @@
-/usr/bin/ar qc libgbemu_core.a CMakeFiles/gbemu_core.dir/apu.cpp.o CMakeFiles/gbemu_core.dir/cpu.cpp.o CMakeFiles/gbemu_core.dir/core.cpp.o CMakeFiles/gbemu_core.dir/mmu.cpp.o CMakeFiles/gbemu_core.dir/ppu.cpp.o CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o
+/usr/bin/ar qc libgbemu_core.a CMakeFiles/gbemu_core.dir/apu.cpp.o CMakeFiles/gbemu_core.dir/cpu.cpp.o CMakeFiles/gbemu_core.dir/core.cpp.o CMakeFiles/gbemu_core.dir/gba_bus.cpp.o CMakeFiles/gbemu_core.dir/gba_core.cpp.o CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o CMakeFiles/gbemu_core.dir/mmu.cpp.o CMakeFiles/gbemu_core.dir/ppu.cpp.o CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o
 /usr/bin/ranlib libgbemu_core.a

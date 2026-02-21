@@ -1,3 +1,4 @@
+R|Test-Games/GBA/sips.gba
+R|Test-Games/GBC/PAC-MAN (PD) [C].GBC
 R|Test-Games/GB/Dango-Dash_v02.gb
 R|Test-Games/GBC/Survive-Halloween-Game-Jam.gb
-R|Test-Games/GBA/sips.gba

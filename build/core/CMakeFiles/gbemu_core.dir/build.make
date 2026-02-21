@@ -114,10 +114,52 @@ core/CMakeFiles/gbemu_core.dir/core.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu_core.dir/core.cpp.s"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.cpp -o CMakeFiles/gbemu_core.dir/core.cpp.s
 
+core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: core/CMakeFiles/gbemu_core.dir/flags.make
+core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.cpp
+core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: core/CMakeFiles/gbemu_core.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o -MF CMakeFiles/gbemu_core.dir/gba_bus.cpp.o.d -o CMakeFiles/gbemu_core.dir/gba_bus.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.cpp
+
+core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/gbemu_core.dir/gba_bus.cpp.i"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.cpp > CMakeFiles/gbemu_core.dir/gba_bus.cpp.i
+
+core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu_core.dir/gba_bus.cpp.s"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.cpp -o CMakeFiles/gbemu_core.dir/gba_bus.cpp.s
+
+core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: core/CMakeFiles/gbemu_core.dir/flags.make
+core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.cpp
+core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: core/CMakeFiles/gbemu_core.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o -MF CMakeFiles/gbemu_core.dir/gba_core.cpp.o.d -o CMakeFiles/gbemu_core.dir/gba_core.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.cpp
+
+core/CMakeFiles/gbemu_core.dir/gba_core.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/gbemu_core.dir/gba_core.cpp.i"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.cpp > CMakeFiles/gbemu_core.dir/gba_core.cpp.i
+
+core/CMakeFiles/gbemu_core.dir/gba_core.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu_core.dir/gba_core.cpp.s"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.cpp -o CMakeFiles/gbemu_core.dir/gba_core.cpp.s
+
+core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: core/CMakeFiles/gbemu_core.dir/flags.make
+core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.cpp
+core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: core/CMakeFiles/gbemu_core.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o -MF CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o.d -o CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.cpp
+
+core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/gbemu_core.dir/gba_cpu.cpp.i"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.cpp > CMakeFiles/gbemu_core.dir/gba_cpu.cpp.i
+
+core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu_core.dir/gba_cpu.cpp.s"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.cpp -o CMakeFiles/gbemu_core.dir/gba_cpu.cpp.s
+
 core/CMakeFiles/gbemu_core.dir/mmu.cpp.o: core/CMakeFiles/gbemu_core.dir/flags.make
 core/CMakeFiles/gbemu_core.dir/mmu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.cpp
 core/CMakeFiles/gbemu_core.dir/mmu.cpp.o: core/CMakeFiles/gbemu_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object core/CMakeFiles/gbemu_core.dir/mmu.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building CXX object core/CMakeFiles/gbemu_core.dir/mmu.cpp.o"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT core/CMakeFiles/gbemu_core.dir/mmu.cpp.o -MF CMakeFiles/gbemu_core.dir/mmu.cpp.o.d -o CMakeFiles/gbemu_core.dir/mmu.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.cpp
 
 core/CMakeFiles/gbemu_core.dir/mmu.cpp.i: cmake_force
@@ -131,7 +173,7 @@ core/CMakeFiles/gbemu_core.dir/mmu.cpp.s: cmake_force
 core/CMakeFiles/gbemu_core.dir/ppu.cpp.o: core/CMakeFiles/gbemu_core.dir/flags.make
 core/CMakeFiles/gbemu_core.dir/ppu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.cpp
 core/CMakeFiles/gbemu_core.dir/ppu.cpp.o: core/CMakeFiles/gbemu_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CXX object core/CMakeFiles/gbemu_core.dir/ppu.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CXX object core/CMakeFiles/gbemu_core.dir/ppu.cpp.o"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT core/CMakeFiles/gbemu_core.dir/ppu.cpp.o -MF CMakeFiles/gbemu_core.dir/ppu.cpp.o.d -o CMakeFiles/gbemu_core.dir/ppu.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.cpp
 
 core/CMakeFiles/gbemu_core.dir/ppu.cpp.i: cmake_force
@@ -145,7 +187,7 @@ core/CMakeFiles/gbemu_core.dir/ppu.cpp.s: cmake_force
 core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o: core/CMakeFiles/gbemu_core.dir/flags.make
 core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu_backend.cpp
 core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o: core/CMakeFiles/gbemu_core.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building CXX object core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CXX object core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o -MF CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o.d -o CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu_backend.cpp
 
 core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.i: cmake_force
@@ -161,6 +203,9 @@ gbemu_core_OBJECTS = \
 "CMakeFiles/gbemu_core.dir/apu.cpp.o" \
 "CMakeFiles/gbemu_core.dir/cpu.cpp.o" \
 "CMakeFiles/gbemu_core.dir/core.cpp.o" \
+"CMakeFiles/gbemu_core.dir/gba_bus.cpp.o" \
+"CMakeFiles/gbemu_core.dir/gba_core.cpp.o" \
+"CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o" \
 "CMakeFiles/gbemu_core.dir/mmu.cpp.o" \
 "CMakeFiles/gbemu_core.dir/ppu.cpp.o" \
 "CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o"
@@ -171,12 +216,15 @@ gbemu_core_EXTERNAL_OBJECTS =
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/apu.cpp.o
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/cpu.cpp.o
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/core.cpp.o
+core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o
+core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o
+core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/mmu.cpp.o
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/ppu.cpp.o
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/ppu_backend.cpp.o
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/build.make
 core/libgbemu_core.a: core/CMakeFiles/gbemu_core.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CXX static library libgbemu_core.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Linking CXX static library libgbemu_core.a"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && $(CMAKE_COMMAND) -P CMakeFiles/gbemu_core.dir/cmake_clean_target.cmake
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core && $(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/gbemu_core.dir/link.txt --verbose=$(VERBOSE)
 
