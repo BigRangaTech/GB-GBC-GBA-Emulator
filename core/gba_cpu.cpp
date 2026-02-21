@@ -2,6 +2,8 @@
 
 #include "gba_bus.h"
 
+#include <iomanip>
+#include <iostream>
 #include <limits>
 
 namespace gbemu::core {
@@ -122,11 +124,31 @@ GbaCpu::GbaCpu() = default;
 void GbaCpu::reset() {
   regs_ = Registers{};
   regs_.r[15] = 0x00000000u;
-  regs_.cpsr = 0x0000001Fu;
+  regs_.cpsr = 0x000000D3u;
   thumb_ = false;
   faulted_ = false;
   fault_reason_.clear();
   unimplemented_count_ = 0;
+  spsr_ = 0;
+  shared_r8_12_.fill(0);
+  fiq_r8_12_.fill(0);
+  banked_r13_usr_ = 0;
+  banked_r14_usr_ = 0;
+  banked_r13_fiq_ = 0;
+  banked_r14_fiq_ = 0;
+  banked_r13_irq_ = 0;
+  banked_r14_irq_ = 0;
+  banked_r13_svc_ = 0;
+  banked_r14_svc_ = 0;
+  banked_r13_abt_ = 0;
+  banked_r14_abt_ = 0;
+  banked_r13_und_ = 0;
+  banked_r14_und_ = 0;
+  spsr_fiq_ = 0;
+  spsr_irq_ = 0;
+  spsr_svc_ = 0;
+  spsr_abt_ = 0;
+  spsr_und_ = 0;
 }
 
 void GbaCpu::fault(const std::string& reason) {
@@ -161,8 +183,18 @@ void GbaCpu::set_reg(int index, std::uint32_t value) {
   regs_.r[static_cast<std::size_t>(index)] = value;
 }
 
+void GbaCpu::set_cpsr(std::uint32_t value) {
+  std::uint32_t old_mode = regs_.cpsr & 0x1F;
+  std::uint32_t new_mode = value & 0x1F;
+  if (old_mode != new_mode) {
+    switch_mode(new_mode);
+  }
+  regs_.cpsr = value;
+  thumb_ = (regs_.cpsr & (1u << 5)) != 0;
+}
+
 void GbaCpu::set_mode(std::uint32_t mode) {
-  regs_.cpsr = (regs_.cpsr & ~0x1Fu) | (mode & 0x1F);
+  set_cpsr((regs_.cpsr & ~0x1Fu) | (mode & 0x1F));
 }
 
 void GbaCpu::set_irq_disable(bool disabled) {
@@ -170,6 +202,180 @@ void GbaCpu::set_irq_disable(bool disabled) {
     regs_.cpsr |= (1u << 7);
   } else {
     regs_.cpsr &= ~(1u << 7);
+  }
+}
+
+void GbaCpu::set_spsr_for_mode(std::uint32_t mode, std::uint32_t value) {
+  if (std::uint32_t* target = spsr_for_mode(mode)) {
+    *target = value;
+    if ((regs_.cpsr & 0x1F) == (mode & 0x1F)) {
+      spsr_ = value;
+    }
+  }
+}
+
+void GbaCpu::set_log_unimplemented(int limit) {
+  if (limit < 0) {
+    limit = 0;
+  }
+  log_unimplemented_limit_ = limit;
+  log_unimplemented_count_ = 0;
+}
+
+void GbaCpu::set_log_swi(int limit) {
+  if (limit < 0) {
+    limit = 0;
+  }
+  log_swi_limit_ = limit;
+  log_swi_count_ = 0;
+}
+
+void GbaCpu::log_unimplemented(bool thumb, std::uint32_t pc, std::uint32_t op) {
+  if (log_unimplemented_limit_ <= 0) {
+    return;
+  }
+  if (log_unimplemented_count_ >= log_unimplemented_limit_) {
+    return;
+  }
+  ++log_unimplemented_count_;
+  std::cout << "GBA UNIMP " << (thumb ? "T" : "A") << " PC=0x"
+            << std::hex << std::setw(8) << std::setfill('0') << pc
+            << " OP=0x" << std::setw(thumb ? 4 : 8) << op
+            << std::dec << "\n";
+}
+
+void GbaCpu::log_swi(bool thumb, std::uint32_t pc, std::uint32_t imm) {
+  if (log_swi_limit_ <= 0) {
+    return;
+  }
+  if (log_swi_count_ >= log_swi_limit_) {
+    return;
+  }
+  ++log_swi_count_;
+  std::cout << "GBA SWI " << (thumb ? "T" : "A") << " PC=0x"
+            << std::hex << std::setw(8) << std::setfill('0') << pc
+            << " IMM=0x" << std::setw(thumb ? 2 : 6) << (imm & (thumb ? 0xFFu : 0x00FFFFFFu))
+            << std::dec << "\n";
+}
+
+void GbaCpu::switch_mode(std::uint32_t new_mode) {
+  std::uint32_t old_mode = regs_.cpsr & 0x1F;
+  if (old_mode == new_mode) {
+    return;
+  }
+  if (old_mode == 0x11) {
+    for (int i = 0; i < 5; ++i) {
+      fiq_r8_12_[static_cast<std::size_t>(i)] = regs_.r[8 + i];
+    }
+  } else if (new_mode == 0x11) {
+    for (int i = 0; i < 5; ++i) {
+      shared_r8_12_[static_cast<std::size_t>(i)] = regs_.r[8 + i];
+    }
+  }
+  save_banked(old_mode);
+  load_banked(new_mode);
+  if (old_mode == 0x11 && new_mode != 0x11) {
+    for (int i = 0; i < 5; ++i) {
+      regs_.r[8 + i] = shared_r8_12_[static_cast<std::size_t>(i)];
+    }
+  }
+  if (new_mode == 0x11) {
+    for (int i = 0; i < 5; ++i) {
+      regs_.r[8 + i] = fiq_r8_12_[static_cast<std::size_t>(i)];
+    }
+  }
+}
+
+void GbaCpu::save_banked(std::uint32_t mode) {
+  switch (mode) {
+    case 0x10:
+    case 0x1F:
+      banked_r13_usr_ = regs_.r[13];
+      banked_r14_usr_ = regs_.r[14];
+      break;
+    case 0x11:
+      banked_r13_fiq_ = regs_.r[13];
+      banked_r14_fiq_ = regs_.r[14];
+      spsr_fiq_ = spsr_;
+      break;
+    case 0x12:
+      banked_r13_irq_ = regs_.r[13];
+      banked_r14_irq_ = regs_.r[14];
+      spsr_irq_ = spsr_;
+      break;
+    case 0x13:
+      banked_r13_svc_ = regs_.r[13];
+      banked_r14_svc_ = regs_.r[14];
+      spsr_svc_ = spsr_;
+      break;
+    case 0x17:
+      banked_r13_abt_ = regs_.r[13];
+      banked_r14_abt_ = regs_.r[14];
+      spsr_abt_ = spsr_;
+      break;
+    case 0x1B:
+      banked_r13_und_ = regs_.r[13];
+      banked_r14_und_ = regs_.r[14];
+      spsr_und_ = spsr_;
+      break;
+    default:
+      break;
+  }
+}
+
+void GbaCpu::load_banked(std::uint32_t mode) {
+  switch (mode) {
+    case 0x10:
+    case 0x1F:
+      regs_.r[13] = banked_r13_usr_;
+      regs_.r[14] = banked_r14_usr_;
+      spsr_ = 0;
+      break;
+    case 0x11:
+      regs_.r[13] = banked_r13_fiq_;
+      regs_.r[14] = banked_r14_fiq_;
+      spsr_ = spsr_fiq_;
+      break;
+    case 0x12:
+      regs_.r[13] = banked_r13_irq_;
+      regs_.r[14] = banked_r14_irq_;
+      spsr_ = spsr_irq_;
+      break;
+    case 0x13:
+      regs_.r[13] = banked_r13_svc_;
+      regs_.r[14] = banked_r14_svc_;
+      spsr_ = spsr_svc_;
+      break;
+    case 0x17:
+      regs_.r[13] = banked_r13_abt_;
+      regs_.r[14] = banked_r14_abt_;
+      spsr_ = spsr_abt_;
+      break;
+    case 0x1B:
+      regs_.r[13] = banked_r13_und_;
+      regs_.r[14] = banked_r14_und_;
+      spsr_ = spsr_und_;
+      break;
+    default:
+      spsr_ = 0;
+      break;
+  }
+}
+
+std::uint32_t* GbaCpu::spsr_for_mode(std::uint32_t mode) {
+  switch (mode & 0x1F) {
+    case 0x11:
+      return &spsr_fiq_;
+    case 0x12:
+      return &spsr_irq_;
+    case 0x13:
+      return &spsr_svc_;
+    case 0x17:
+      return &spsr_abt_;
+    case 0x1B:
+      return &spsr_und_;
+    default:
+      return nullptr;
   }
 }
 
@@ -183,6 +389,34 @@ void GbaCpu::set_flag_mask(std::uint32_t mask, bool value) {
   } else {
     regs_.cpsr &= ~mask;
   }
+}
+
+void GbaCpu::write_alu_result(std::uint32_t rd, std::uint32_t value, bool s) {
+  if (rd >= regs_.r.size()) {
+    return;
+  }
+  if (rd != 15) {
+    regs_.r[rd] = value;
+    return;
+  }
+  if (s) {
+    std::uint32_t mode = regs_.cpsr & 0x1Fu;
+    if (mode != 0x10 && mode != 0x1F) {
+      set_cpsr(spsr_);
+    }
+  }
+  std::uint32_t mask = thumb_ ? ~1u : ~3u;
+  regs_.r[15] = value & mask;
+}
+
+std::uint32_t GbaCpu::operand_reg(int index) const {
+  if (index < 0 || index >= static_cast<int>(regs_.r.size())) {
+    return 0;
+  }
+  if (index == 15) {
+    return regs_.r[15] + (thumb_ ? 2u : 4u);
+  }
+  return regs_.r[static_cast<std::size_t>(index)];
 }
 
 void GbaCpu::set_flags_nz(std::uint32_t result) {
@@ -252,13 +486,15 @@ int GbaCpu::step(GbaBus* bus) {
     std::uint16_t op = bus->read16(pc);
     regs_.r[15] = pc + 2;
     std::uint16_t op_high = op & 0xF800;
-    if ((op & 0xF800) == 0x0000) {
+    if ((op & 0xF800) == 0x0000 ||
+        (op & 0xF800) == 0x0800 ||
+        (op & 0xF800) == 0x1000) {
       std::uint32_t type = (op >> 11) & 0x3;
       std::uint32_t imm5 = (op >> 6) & 0x1F;
       int rs = (op >> 3) & 0x7;
       int rd = op & 0x7;
       bool carry_in = get_flag_mask(1u << 29) != 0;
-      ShiftResult sh = shift_value(regs_.r[rs], type, imm5, carry_in, true);
+      ShiftResult sh = shift_value(operand_reg(rs), type, imm5, carry_in, true);
       regs_.r[rd] = sh.value;
       set_flags_nz(sh.value);
       set_flag_mask(1u << 29, sh.carry);
@@ -268,8 +504,8 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t opcode = (op >> 6) & 0xF;
       int rs = (op >> 3) & 0x7;
       int rd = op & 0x7;
-      std::uint32_t a = regs_.r[rd];
-      std::uint32_t b = regs_.r[rs];
+      std::uint32_t a = operand_reg(rd);
+      std::uint32_t b = operand_reg(rs);
       bool carry_in = get_flag_mask(1u << 29) != 0;
       switch (opcode) {
         case 0x0: {
@@ -383,15 +619,16 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t h2 = (op >> 6) & 0x1;
       std::uint32_t rs = ((op >> 3) & 0x7) | (h2 << 3);
       std::uint32_t rd = (op & 0x7) | (h1 << 3);
-      std::uint32_t val = regs_.r[rs];
+      std::uint32_t val = operand_reg(static_cast<int>(rs));
       switch (opcode) {
         case 0x0: {
-          regs_.r[rd] = regs_.r[rd] + val;
+          regs_.r[rd] = operand_reg(static_cast<int>(rd)) + val;
           return 2;
         }
         case 0x1: {
-          std::uint32_t result = regs_.r[rd] - val;
-          set_flags_sub(regs_.r[rd], val, result);
+          std::uint32_t lhs = operand_reg(static_cast<int>(rd));
+          std::uint32_t result = lhs - val;
+          set_flags_sub(lhs, val, result);
           return 2;
         }
         case 0x2: {
@@ -405,12 +642,12 @@ int GbaCpu::step(GbaBus* bus) {
         }
         case 0x3: {
           if (h1) {
-            std::uint32_t target = regs_.r[rs];
+            std::uint32_t target = val;
             regs_.r[14] = (pc + 2) | 1u;
             set_thumb((target & 1u) != 0);
             regs_.r[15] = target & ~1u;
           } else {
-            std::uint32_t target = regs_.r[rs];
+            std::uint32_t target = val;
             set_thumb((target & 1u) != 0);
             regs_.r[15] = target & ~1u;
           }
@@ -452,7 +689,7 @@ int GbaCpu::step(GbaBus* bus) {
     }
     if ((op & 0xFF00) == 0x4700) {
       int rm = (op >> 3) & 0xF;
-      std::uint32_t target = regs_.r[rm];
+      std::uint32_t target = operand_reg(rm);
       set_thumb((target & 1u) != 0);
       regs_.r[15] = target & ~1u;
       return 2;
@@ -469,7 +706,7 @@ int GbaCpu::step(GbaBus* bus) {
       int rm = (op >> 6) & 0x7;
       int rn = (op >> 3) & 0x7;
       int rd = op & 0x7;
-      std::uint32_t addr = regs_.r[rn] + regs_.r[rm];
+      std::uint32_t addr = operand_reg(rn) + operand_reg(rm);
       switch (opcode) {
         case 0x0:
           bus->write32(addr, regs_.r[rd]);
@@ -626,6 +863,22 @@ int GbaCpu::step(GbaBus* bus) {
       regs_.r[rn] = addr;
       return 4;
     }
+    if ((op & 0xFC00) == 0x1800) {
+      bool sub = (op & 0x0200) != 0;
+      std::uint32_t rn = (op >> 6) & 0x7;
+      std::uint32_t rs = (op >> 3) & 0x7;
+      std::uint32_t rd = op & 0x7;
+      std::uint32_t lhs = regs_.r[rs];
+      std::uint32_t rhs = regs_.r[rn];
+      std::uint32_t result = sub ? (lhs - rhs) : (lhs + rhs);
+      regs_.r[rd] = result;
+      if (sub) {
+        set_flags_sub(lhs, rhs, result);
+      } else {
+        set_flags_add(lhs, rhs, result);
+      }
+      return 2;
+    }
     if ((op & 0xFC00) == 0x1C00) {
       bool immediate = (op & 0x0400) != 0;
       bool sub = (op & 0x0200) != 0;
@@ -645,10 +898,14 @@ int GbaCpu::step(GbaBus* bus) {
       return 2;
     }
     if ((op & 0xFF00) == 0xDF00) {
+      log_swi(true, pc, static_cast<std::uint32_t>(op & 0xFF));
       std::uint32_t return_addr = pc + 2;
+      if (std::uint32_t* spsr = spsr_for_mode(0x13)) {
+        *spsr = regs_.cpsr;
+      }
+      set_mode(0x13);
       regs_.r[14] = return_addr;
       set_thumb(false);
-      set_mode(0x13);
       set_irq_disable(true);
       regs_.r[15] = 0x00000008u;
       return 3;
@@ -685,6 +942,7 @@ int GbaCpu::step(GbaBus* bus) {
       regs_.r[15] = target;
       return 2;
     }
+    log_unimplemented(true, pc, op);
     ++unimplemented_count_;
     return 2;
   }
@@ -699,17 +957,21 @@ int GbaCpu::step(GbaBus* bus) {
 
   if ((op & 0x0FFFFFF0u) == 0x012FFF10u) {
     int rm = op & 0xF;
-    std::uint32_t target = regs_.r[rm];
+    std::uint32_t target = operand_reg(rm);
     set_thumb((target & 1u) != 0);
     regs_.r[15] = target & ~1u;
     return 4;
   }
 
   if ((op & 0x0F000000u) == 0x0F000000u) {
+    log_swi(false, pc, op & 0x00FFFFFFu);
     std::uint32_t return_addr = pc + 4;
+    if (std::uint32_t* spsr = spsr_for_mode(0x13)) {
+      *spsr = regs_.cpsr;
+    }
+    set_mode(0x13);
     regs_.r[14] = return_addr;
     set_thumb(false);
-    set_mode(0x13);
     set_irq_disable(true);
     regs_.r[15] = 0x00000008u;
     return 4;
@@ -717,19 +979,23 @@ int GbaCpu::step(GbaBus* bus) {
 
   if ((op & 0x0FFFF000u) == 0xE25EF000u && (op & 0x00000FFFu) == 0x00000004u) {
     std::uint32_t target = regs_.r[14] - 4;
-    set_thumb((target & 1u) != 0);
+    std::uint32_t mode = regs_.cpsr & 0x1Fu;
+    if (mode != 0x10 && mode != 0x1F) {
+      std::uint32_t restore = spsr_;
+      set_cpsr(restore);
+    }
     regs_.r[15] = target & ~1u;
-    set_mode(0x1F);
-    set_irq_disable(false);
     return 4;
   }
 
   if ((op & 0x0FFFFFFFu) == 0xE1B0F00Eu) {
     std::uint32_t target = regs_.r[14];
-    set_thumb((target & 1u) != 0);
+    std::uint32_t mode = regs_.cpsr & 0x1Fu;
+    if (mode != 0x10 && mode != 0x1F) {
+      std::uint32_t restore = spsr_;
+      set_cpsr(restore);
+    }
     regs_.r[15] = target & ~1u;
-    set_mode(0x1F);
-    set_irq_disable(false);
     return 4;
   }
 
@@ -739,6 +1005,9 @@ int GbaCpu::step(GbaBus* bus) {
       imm24 |= ~0x00FFFFFF;
     }
     std::uint32_t target = pc + 8 + (imm24 << 2);
+    if (op & (1u << 24)) {
+      regs_.r[14] = pc + 4;
+    }
     regs_.r[15] = target;
     return 4;
   }
@@ -762,6 +1031,89 @@ int GbaCpu::step(GbaBus* bus) {
     return 4;
   }
 
+  if ((op & 0x0E400090u) == 0x00000090u) {
+    bool p = (op & (1u << 24)) != 0;
+    bool u = (op & (1u << 23)) != 0;
+    bool w = (op & (1u << 21)) != 0;
+    bool l = (op & (1u << 20)) != 0;
+    bool s = (op & (1u << 6)) != 0;
+    bool h = (op & (1u << 5)) != 0;
+    std::uint32_t rn = (op >> 16) & 0xF;
+    std::uint32_t rd = (op >> 12) & 0xF;
+    std::uint32_t offset = 0;
+    if (op & (1u << 22)) {
+      std::uint32_t hi = (op >> 8) & 0xF;
+      std::uint32_t lo = op & 0xF;
+      offset = (hi << 4) | lo;
+    } else {
+      std::uint32_t rm = op & 0xF;
+      offset = operand_reg(static_cast<int>(rm));
+    }
+    std::uint32_t base = operand_reg(static_cast<int>(rn));
+    std::uint32_t addr = base;
+    if (p) {
+      addr = u ? (base + offset) : (base - offset);
+      if (w) {
+        regs_.r[rn] = addr;
+      }
+    } else {
+      addr = base;
+      std::uint32_t next = u ? (base + offset) : (base - offset);
+      regs_.r[rn] = next;
+    }
+    if (l) {
+      if (h) {
+        regs_.r[rd] = bus->read16(addr);
+      } else if (s) {
+        std::int8_t value = static_cast<std::int8_t>(bus->read8(addr));
+        regs_.r[rd] = static_cast<std::int32_t>(value);
+      } else {
+        std::int16_t value = static_cast<std::int16_t>(bus->read16(addr));
+        regs_.r[rd] = static_cast<std::int32_t>(value);
+      }
+    } else {
+      if (h) {
+        bus->write16(addr, static_cast<std::uint16_t>(regs_.r[rd] & 0xFFFF));
+      } else {
+        bus->write8(addr, static_cast<std::uint8_t>(regs_.r[rd] & 0xFF));
+      }
+    }
+    return 4;
+  }
+
+  if ((op & 0x0FBF0FFFu) == 0x010F0000u) {
+    std::uint32_t rd = (op >> 12) & 0xF;
+    bool spsr = (op & (1u << 22)) != 0;
+    if (spsr) {
+      regs_.r[rd] = spsr_;
+    } else {
+      regs_.r[rd] = regs_.cpsr;
+    }
+    return 4;
+  }
+
+  if ((op & 0x0FB0FFF0u) == 0x0120F000u) {
+    std::uint32_t rm = op & 0xF;
+    std::uint32_t value = operand_reg(static_cast<int>(rm));
+    std::uint32_t mask = 0;
+    if (op & (1u << 16)) mask |= 0x000000FFu;
+    if (op & (1u << 17)) mask |= 0x0000FF00u;
+    if (op & (1u << 18)) mask |= 0x00FF0000u;
+    if (op & (1u << 19)) mask |= 0xFF000000u;
+    bool to_spsr = (op & (1u << 22)) != 0;
+    if (to_spsr) {
+      if (std::uint32_t* target = spsr_for_mode(regs_.cpsr & 0x1F)) {
+        *target = (*target & ~mask) | (value & mask);
+        if ((regs_.cpsr & 0x1F) != 0x10 && (regs_.cpsr & 0x1F) != 0x1F) {
+          spsr_ = *target;
+        }
+      }
+    } else {
+      set_cpsr((regs_.cpsr & ~mask) | (value & mask));
+    }
+    return 4;
+  }
+
   if (((op >> 26) & 0x3) == 0x1) {
     bool i = (op & (1u << 25)) != 0;
     bool p = (op & (1u << 24)) != 0;
@@ -773,7 +1125,7 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t rn = (op >> 16) & 0xF;
       std::uint32_t rd = (op >> 12) & 0xF;
       std::uint32_t offset = op & 0xFFF;
-      std::uint32_t base = regs_.r[rn];
+      std::uint32_t base = operand_reg(static_cast<int>(rn));
       std::uint32_t addr = base;
       if (p) {
         addr = u ? (base + offset) : (base - offset);
@@ -786,10 +1138,12 @@ int GbaCpu::step(GbaBus* bus) {
         regs_.r[rn] = next;
       }
       if (l) {
-        if (b) {
-          regs_.r[rd] = bus->read8(addr);
+        std::uint32_t value = b ? bus->read8(addr) : bus->read32(addr);
+        if (rd == 15) {
+          set_thumb((value & 1u) != 0);
+          regs_.r[15] = value & ~1u;
         } else {
-          regs_.r[rd] = bus->read32(addr);
+          regs_.r[rd] = value;
         }
       } else {
         if (b) {
@@ -806,7 +1160,7 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t rm = op & 0xF;
       std::uint32_t shift_type = (op >> 5) & 0x3;
       std::uint32_t shift = (op >> 7) & 0x1F;
-      std::uint32_t offset = regs_.r[rm];
+      std::uint32_t offset = operand_reg(static_cast<int>(rm));
       switch (shift_type) {
         case 0:
           offset = offset << shift;
@@ -831,7 +1185,7 @@ int GbaCpu::step(GbaBus* bus) {
         default:
           break;
       }
-      std::uint32_t base = regs_.r[rn];
+      std::uint32_t base = operand_reg(static_cast<int>(rn));
       std::uint32_t addr = base;
       if (p) {
         addr = u ? (base + offset) : (base - offset);
@@ -844,10 +1198,12 @@ int GbaCpu::step(GbaBus* bus) {
         regs_.r[rn] = next;
       }
       if (l) {
-        if (b) {
-          regs_.r[rd] = bus->read8(addr);
+        std::uint32_t value = b ? bus->read8(addr) : bus->read32(addr);
+        if (rd == 15) {
+          set_thumb((value & 1u) != 0);
+          regs_.r[15] = value & ~1u;
         } else {
-          regs_.r[rd] = bus->read32(addr);
+          regs_.r[rd] = value;
         }
       } else {
         if (b) {
@@ -866,9 +1222,9 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t shift_type = (op >> 5) & 0x3;
       bool carry_in = get_flag_mask(1u << 29) != 0;
       std::uint32_t shift = regs_.r[rs] & 0xFF;
-      ShiftResult sh = shift_value(regs_.r[rm], shift_type, shift, carry_in, false);
+      ShiftResult sh = shift_value(operand_reg(static_cast<int>(rm)), shift_type, shift, carry_in, false);
       std::uint32_t offset = sh.value;
-      std::uint32_t base = regs_.r[rn];
+      std::uint32_t base = operand_reg(static_cast<int>(rn));
       std::uint32_t addr = base;
       if (p) {
         addr = u ? (base + offset) : (base - offset);
@@ -881,10 +1237,12 @@ int GbaCpu::step(GbaBus* bus) {
         regs_.r[rn] = next;
       }
       if (l) {
-        if (b) {
-          regs_.r[rd] = bus->read8(addr);
+        std::uint32_t value = b ? bus->read8(addr) : bus->read32(addr);
+        if (rd == 15) {
+          set_thumb((value & 1u) != 0);
+          regs_.r[15] = value & ~1u;
         } else {
-          regs_.r[rd] = bus->read32(addr);
+          regs_.r[rd] = value;
         }
       } else {
         if (b) {
@@ -900,6 +1258,7 @@ int GbaCpu::step(GbaBus* bus) {
   if (((op >> 25) & 0x7) == 0x4) {
     bool p = (op & (1u << 24)) != 0;
     bool u = (op & (1u << 23)) != 0;
+    bool s = (op & (1u << 22)) != 0;
     bool w = (op & (1u << 21)) != 0;
     bool l = (op & (1u << 20)) != 0;
     std::uint32_t rn = (op >> 16) & 0xF;
@@ -923,6 +1282,37 @@ int GbaCpu::step(GbaBus* bus) {
         addr += 4;
       }
     }
+    bool user_bank = s && !(reg_list & (1u << 15)) &&
+                     ((regs_.cpsr & 0x1F) != 0x10) && ((regs_.cpsr & 0x1F) != 0x1F);
+    auto read_user_reg = [this](int index) -> std::uint32_t {
+      if (index == 13) {
+        return banked_r13_usr_;
+      }
+      if (index == 14) {
+        return banked_r14_usr_;
+      }
+      if ((regs_.cpsr & 0x1F) == 0x11 && index >= 8 && index <= 12) {
+        return shared_r8_12_[static_cast<std::size_t>(index - 8)];
+      }
+      return regs_.r[static_cast<std::size_t>(index)];
+    };
+    auto write_user_reg = [this](int index, std::uint32_t value) {
+      if (index == 13) {
+        banked_r13_usr_ = value;
+        return;
+      }
+      if (index == 14) {
+        banked_r14_usr_ = value;
+        return;
+      }
+      if ((regs_.cpsr & 0x1F) == 0x11 && index >= 8 && index <= 12) {
+        shared_r8_12_[static_cast<std::size_t>(index - 8)] = value;
+        return;
+      }
+      regs_.r[static_cast<std::size_t>(index)] = value;
+    };
+    std::uint32_t loaded_pc = 0;
+    bool loaded_pc_valid = false;
     for (int i = 0; i < 16; ++i) {
       if (!(reg_list & (1u << i))) {
         continue;
@@ -930,16 +1320,35 @@ int GbaCpu::step(GbaBus* bus) {
       if (l) {
         std::uint32_t value = bus->read32(addr);
         if (i == 15) {
-          set_thumb((value & 1u) != 0);
-          regs_.r[15] = value & ~1u;
+          loaded_pc = value;
+          loaded_pc_valid = true;
         } else {
-          regs_.r[i] = value;
+          if (user_bank) {
+            write_user_reg(i, value);
+          } else {
+            regs_.r[i] = value;
+          }
         }
       } else {
-        std::uint32_t value = (i == 15) ? (regs_.r[15] + 4) : regs_.r[i];
+        std::uint32_t value = (i == 15) ? (regs_.r[15] + 4)
+                                         : (user_bank ? read_user_reg(i) : regs_.r[i]);
         bus->write32(addr, value);
       }
       addr += 4;
+    }
+    if (l && s && (reg_list & (1u << 15))) {
+      std::uint32_t mode = regs_.cpsr & 0x1Fu;
+      if (mode != 0x10 && mode != 0x1F) {
+        set_cpsr(spsr_);
+      }
+    }
+    if (l && loaded_pc_valid) {
+      if (s && (reg_list & (1u << 15))) {
+        regs_.r[15] = loaded_pc & (thumb_ ? ~1u : ~3u);
+      } else {
+        set_thumb((loaded_pc & 1u) != 0);
+        regs_.r[15] = loaded_pc & ~1u;
+      }
     }
     if (w) {
       std::uint32_t delta = static_cast<std::uint32_t>(count) * 4u;
@@ -961,118 +1370,118 @@ int GbaCpu::step(GbaBus* bus) {
     std::uint32_t result = 0;
     switch (opcode) {
       case 0x0:
-        result = regs_.r[rn] & imm;
+        result = operand_reg(static_cast<int>(rn)) & imm;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh_carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0x1:
-        result = regs_.r[rn] ^ imm;
+        result = operand_reg(static_cast<int>(rn)) ^ imm;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh_carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0x2: {
-        AddResult ar = add_with_carry(regs_.r[rn], ~imm, true);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), ~imm, true);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x3: {
-        AddResult ar = add_with_carry(imm, ~regs_.r[rn], true);
+        AddResult ar = add_with_carry(imm, ~operand_reg(static_cast<int>(rn)), true);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x4: {
-        AddResult ar = add_with_carry(regs_.r[rn], imm, false);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), imm, false);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x5: {
-        AddResult ar = add_with_carry(regs_.r[rn], imm, carry_in);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), imm, carry_in);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x6: {
-        AddResult ar = add_with_carry(regs_.r[rn], ~imm, carry_in);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), ~imm, carry_in);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x7: {
-        AddResult ar = add_with_carry(imm, ~regs_.r[rn], carry_in);
+        AddResult ar = add_with_carry(imm, ~operand_reg(static_cast<int>(rn)), carry_in);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x8:
-        result = regs_.r[rn] & imm;
+        result = operand_reg(static_cast<int>(rn)) & imm;
         set_flags_nz(result);
         set_flag_mask(1u << 29, sh_carry);
         return 4;
       case 0x9:
-        result = regs_.r[rn] ^ imm;
+        result = operand_reg(static_cast<int>(rn)) ^ imm;
         set_flags_nz(result);
         set_flag_mask(1u << 29, sh_carry);
         return 4;
       case 0xA: {
-        AddResult ar = add_with_carry(regs_.r[rn], ~imm, true);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), ~imm, true);
         set_flags_nz(ar.value);
         set_flag_mask(1u << 29, ar.carry);
         set_flag_mask(1u << 28, ar.overflow);
         return 4;
       }
       case 0xB: {
-        AddResult ar = add_with_carry(regs_.r[rn], imm, false);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), imm, false);
         set_flags_nz(ar.value);
         set_flag_mask(1u << 29, ar.carry);
         set_flag_mask(1u << 28, ar.overflow);
         return 4;
       }
       case 0xC:
-        result = regs_.r[rn] | imm;
+        result = operand_reg(static_cast<int>(rn)) | imm;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh_carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0xD:
         result = imm;
@@ -1080,15 +1489,15 @@ int GbaCpu::step(GbaBus* bus) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh_carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0xE:
-        result = regs_.r[rn] & ~imm;
+        result = operand_reg(static_cast<int>(rn)) & ~imm;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh_carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0xF:
         result = ~imm;
@@ -1096,7 +1505,7 @@ int GbaCpu::step(GbaBus* bus) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh_carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       default:
         break;
@@ -1109,7 +1518,7 @@ int GbaCpu::step(GbaBus* bus) {
     std::uint32_t rn = (op >> 16) & 0xF;
     std::uint32_t rd = (op >> 12) & 0xF;
     std::uint32_t rm = op & 0xF;
-    std::uint32_t op2 = regs_.r[rm];
+    std::uint32_t op2 = operand_reg(static_cast<int>(rm));
     std::uint32_t shift_type = (op >> 5) & 0x3;
     bool carry_in = get_flag_mask(1u << 29) != 0;
     ShiftResult sh = {op2, carry_in};
@@ -1125,94 +1534,94 @@ int GbaCpu::step(GbaBus* bus) {
     std::uint32_t result = 0;
     switch (opcode) {
       case 0x0:
-        result = regs_.r[rn] & op2;
+        result = operand_reg(static_cast<int>(rn)) & op2;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh.carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0x1:
-        result = regs_.r[rn] ^ op2;
+        result = operand_reg(static_cast<int>(rn)) ^ op2;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh.carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0x2:
-        result = regs_.r[rn] - op2;
-        if (s) set_flags_sub(regs_.r[rn], op2, result);
-        regs_.r[rd] = result;
+        result = operand_reg(static_cast<int>(rn)) - op2;
+        if (s) set_flags_sub(operand_reg(static_cast<int>(rn)), op2, result);
+        write_alu_result(rd, result, s);
         return 4;
       case 0x3:
-        result = op2 - regs_.r[rn];
-        if (s) set_flags_sub(op2, regs_.r[rn], result);
-        regs_.r[rd] = result;
+        result = op2 - operand_reg(static_cast<int>(rn));
+        if (s) set_flags_sub(op2, operand_reg(static_cast<int>(rn)), result);
+        write_alu_result(rd, result, s);
         return 4;
       case 0x4:
-        result = regs_.r[rn] + op2;
-        if (s) set_flags_add(regs_.r[rn], op2, result);
-        regs_.r[rd] = result;
+        result = operand_reg(static_cast<int>(rn)) + op2;
+        if (s) set_flags_add(operand_reg(static_cast<int>(rn)), op2, result);
+        write_alu_result(rd, result, s);
         return 4;
       case 0x5: {
-        AddResult ar = add_with_carry(regs_.r[rn], op2, carry_in);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), op2, carry_in);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x6: {
-        AddResult ar = add_with_carry(regs_.r[rn], ~op2, carry_in);
+        AddResult ar = add_with_carry(operand_reg(static_cast<int>(rn)), ~op2, carry_in);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x7: {
-        AddResult ar = add_with_carry(op2, ~regs_.r[rn], carry_in);
+        AddResult ar = add_with_carry(op2, ~operand_reg(static_cast<int>(rn)), carry_in);
         result = ar.value;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, ar.carry);
           set_flag_mask(1u << 28, ar.overflow);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       }
       case 0x8:
-        result = regs_.r[rn] & op2;
+        result = operand_reg(static_cast<int>(rn)) & op2;
         set_flags_nz(result);
         set_flag_mask(1u << 29, sh.carry);
         return 4;
       case 0x9:
-        result = regs_.r[rn] ^ op2;
+        result = operand_reg(static_cast<int>(rn)) ^ op2;
         set_flags_nz(result);
         set_flag_mask(1u << 29, sh.carry);
         return 4;
       case 0xA:
-        result = regs_.r[rn] - op2;
-        set_flags_sub(regs_.r[rn], op2, result);
+        result = operand_reg(static_cast<int>(rn)) - op2;
+        set_flags_sub(operand_reg(static_cast<int>(rn)), op2, result);
         return 4;
       case 0xB:
-        result = regs_.r[rn] + op2;
-        set_flags_add(regs_.r[rn], op2, result);
+        result = operand_reg(static_cast<int>(rn)) + op2;
+        set_flags_add(operand_reg(static_cast<int>(rn)), op2, result);
         return 4;
       case 0xC:
-        result = regs_.r[rn] | op2;
+        result = operand_reg(static_cast<int>(rn)) | op2;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh.carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0xD:
         result = op2;
@@ -1220,15 +1629,15 @@ int GbaCpu::step(GbaBus* bus) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh.carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0xE:
-        result = regs_.r[rn] & ~op2;
+        result = operand_reg(static_cast<int>(rn)) & ~op2;
         if (s) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh.carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       case 0xF:
         result = ~op2;
@@ -1236,7 +1645,7 @@ int GbaCpu::step(GbaBus* bus) {
           set_flags_nz(result);
           set_flag_mask(1u << 29, sh.carry);
         }
-        regs_.r[rd] = result;
+        write_alu_result(rd, result, s);
         return 4;
       default:
         break;
@@ -1244,10 +1653,12 @@ int GbaCpu::step(GbaBus* bus) {
   }
 
   if ((op & 0x0F000000u) == 0x0F000000u) {
+    log_unimplemented(false, pc, op);
     ++unimplemented_count_;
     return 4;
   }
 
+  log_unimplemented(false, pc, op);
   ++unimplemented_count_;
   return 4;
 }

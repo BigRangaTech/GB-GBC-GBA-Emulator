@@ -128,6 +128,20 @@ void EmulatorCore::set_cpu_trace_enabled(bool enabled) {
   cpu_.set_trace_enabled(enabled);
 }
 
+void EmulatorCore::set_gba_trace(int steps, bool trace_io) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_trace(steps, trace_io);
+}
+
+void EmulatorCore::set_gba_trace_after_rom(int steps, bool trace_io) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_trace_after_rom(steps, trace_io);
+}
+
 std::vector<Cpu::TraceEntry> EmulatorCore::cpu_trace() const {
   if (system_ == System::GBA) {
     return {};
@@ -143,8 +157,53 @@ void EmulatorCore::set_cgb_color_correction(bool enabled) {
   ppu_.set_cgb_color_correction(enabled);
 }
 
+void EmulatorCore::set_gba_color_correction(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_gba_color_correction(enabled);
+}
+
+void EmulatorCore::set_gba_log_unimplemented(int limit) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_log_unimplemented(limit);
+}
+
+void EmulatorCore::set_gba_watch_video_io(int limit) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_watch_video_io(limit);
+}
+
+void EmulatorCore::set_gba_log_swi(int limit) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_log_swi(limit);
+}
+
+void EmulatorCore::set_gba_watchdog(int steps) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_watchdog_steps(steps);
+}
+
+void EmulatorCore::set_gba_pc_watch(std::uint32_t start, std::uint32_t end, int count) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_pc_watch(start, end, count);
+}
+
 void EmulatorCore::set_joypad_state(std::uint8_t state) {
   if (system_ == System::GBA) {
+    std::uint16_t keyinput = static_cast<std::uint16_t>(state) & 0xFF;
+    keyinput |= 0x0300u;
+    gba_.set_keyinput(keyinput);
     return;
   }
   mmu_.set_joypad_state(state);

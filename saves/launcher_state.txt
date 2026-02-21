@@ -1,4 +1,6 @@
 R|Test-Games/GBA/sips.gba
+R|Test-Games/GBA/Aladdin (USA) (En,Fr,De,Es).gba
+R|__gba_test__
 R|Test-Games/GBC/PAC-MAN (PD) [C].GBC
 R|Test-Games/GB/Dango-Dash_v02.gb
 R|Test-Games/GBC/Survive-Halloween-Game-Jam.gb

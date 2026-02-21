@@ -32,9 +32,17 @@ class EmulatorCore {
   std::uint16_t cpu_pc() const;
   std::uint8_t cpu_opcode() const;
   void set_cpu_trace_enabled(bool enabled);
+  void set_gba_trace(int steps, bool trace_io);
+  void set_gba_trace_after_rom(int steps, bool trace_io);
   std::vector<Cpu::TraceEntry> cpu_trace() const;
   void set_debug_window_overlay(bool enabled);
   void set_cgb_color_correction(bool enabled);
+  void set_gba_color_correction(bool enabled);
+  void set_gba_log_unimplemented(int limit);
+  void set_gba_watch_video_io(int limit);
+  void set_gba_log_swi(int limit);
+  void set_gba_watchdog(int steps);
+  void set_gba_pc_watch(std::uint32_t start, std::uint32_t end, int count);
   void set_joypad_state(std::uint8_t state);
   void request_interrupt(std::uint8_t bit);
   void generate_audio(int sample_rate, int samples, std::vector<std::int16_t>* out);

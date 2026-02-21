@@ -135,6 +135,14 @@ core/CMakeFiles/gbemu_core.dir/core.cpp.o: \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/system.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/cpu.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.h \
+ /usr/include/c++/15/unordered_map \
+ /usr/include/c++/15/bits/unordered_map.h \
+ /usr/include/c++/15/bits/hashtable.h \
+ /usr/include/c++/15/bits/hashtable_policy.h \
+ /usr/include/c++/15/ext/aligned_buffer.h \
+ /usr/include/c++/15/bits/enable_special_members.h \
+ /usr/include/c++/15/bits/node_handle.h \
+ /usr/include/c++/15/bits/erase_if.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.h \
@@ -187,7 +195,6 @@ core/CMakeFiles/gbemu_core.dir/core.cpp.o: \
  /usr/include/c++/15/bits/shared_ptr.h \
  /usr/include/c++/15/bits/shared_ptr_base.h \
  /usr/include/c++/15/bits/allocated_ptr.h \
- /usr/include/c++/15/ext/aligned_buffer.h \
  /usr/include/c++/15/ext/concurrence.h \
  /usr/include/c++/15/bits/shared_ptr_atomic.h \
  /usr/include/c++/15/bits/atomic_base.h \

@@ -1094,6 +1094,7 @@ struct GlobalSettings {
   std::optional<double> fps_override;
   bool audio_enabled = true;
   bool cgb_color_correction = false;
+  bool gba_color_correction = false;
   int deadzone = 16000;
   bool show_hud = true;
   HudCorner hud_corner = HudCorner::TopLeft;
@@ -1391,10 +1392,22 @@ struct Options {
   std::vector<std::string> rom_dirs;
   bool cpu_trace = false;
   bool boot_trace = false;
+  bool gba_trace = false;
+  int gba_trace_steps = 2000;
+  bool gba_trace_io = true;
+  bool gba_trace_after_rom = false;
+  int gba_unimp_limit = 0;
+  int gba_watch_video_io = 0;
+  int gba_swi_limit = 0;
+  int gba_watchdog_steps = 0;
+  std::optional<std::uint32_t> gba_pc_watch_start;
+  std::optional<std::uint32_t> gba_pc_watch_end;
+  int gba_pc_watch_count = 0;
   bool headless = false;
   int headless_frames = 120;
   bool debug_window_overlay = false;
   bool cgb_color_correction = false;
+  bool gba_color_correction = false;
   bool show_help_overlay = false;
   bool show_help = false;
 };
@@ -1417,10 +1430,19 @@ void print_usage(const char* exe) {
   std::cout << "  --gba-test             Use built-in GBA mode 3 test ROM\n";
   std::cout << "  --cpu-trace            Enable CPU trace buffer on faults\n";
   std::cout << "  --boot-trace           Log when boot ROM is disabled\n";
+  std::cout << "  --gba-trace            Log GBA instructions + IO writes (short trace)\n";
+  std::cout << "  --gba-trace-steps <n>  Instruction trace length (default: 2000)\n";
+  std::cout << "  --gba-trace-after-rom  Start GBA trace after ROM entry\n";
+  std::cout << "  --gba-unimp <n>        Log first N unimplemented GBA opcodes\n";
+  std::cout << "  --gba-video-io <n>     Log first N video IO writes\n";
+  std::cout << "  --gba-swi <n>          Log first N GBA SWI calls\n";
+  std::cout << "  --gba-watchdog <n>     Report hot PCs every N steps (0 disables)\n";
+  std::cout << "  --gba-pc-watch <start> <end> <count>  Trace GBA PC range (hex or dec)\n";
   std::cout << "  --headless             Run without SDL window\n";
   std::cout << "  --frames <count>       Frames to run in headless mode (default: 120)\n";
   std::cout << "  --debug-window         Draw window border overlay\n";
   std::cout << "  --cgb-color-correct    Apply simple CGB color correction\n";
+  std::cout << "  --gba-color-correct    Apply simple GBA color correction\n";
   std::cout << "  --help-overlay         Toggle help overlay at start\n";
   std::cout << "  -h, --help             Show this help text\n";
 }
@@ -1518,6 +1540,67 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
     }
   }
 
+  std::string gba_trace_value = config.get_string("gba_trace", "");
+  if (!gba_trace_value.empty()) {
+    auto parsed = parse_bool(gba_trace_value);
+    if (parsed.has_value()) {
+      options->gba_trace = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_trace value '" << gba_trace_value << "'\n";
+    }
+  }
+
+  std::string gba_trace_after_rom_value = config.get_string("gba_trace_after_rom", "");
+  if (!gba_trace_after_rom_value.empty()) {
+    auto parsed = parse_bool(gba_trace_after_rom_value);
+    if (parsed.has_value()) {
+      options->gba_trace_after_rom = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_trace_after_rom value '"
+                << gba_trace_after_rom_value << "'\n";
+    }
+  }
+
+  if (auto steps = config.get_int("gba_trace_steps")) {
+    if (*steps >= 0) {
+      options->gba_trace_steps = *steps;
+    }
+  }
+
+  if (auto unimp_limit = config.get_int("gba_unimp_limit")) {
+    if (*unimp_limit >= 0) {
+      options->gba_unimp_limit = *unimp_limit;
+    }
+  }
+
+  if (auto watch_video = config.get_int("gba_video_io")) {
+    if (*watch_video >= 0) {
+      options->gba_watch_video_io = *watch_video;
+    }
+  }
+
+  if (auto swi_limit = config.get_int("gba_swi_limit")) {
+    if (*swi_limit >= 0) {
+      options->gba_swi_limit = *swi_limit;
+    }
+  }
+
+  if (auto watchdog_steps = config.get_int("gba_watchdog_steps")) {
+    if (*watchdog_steps >= 0) {
+      options->gba_watchdog_steps = *watchdog_steps;
+    }
+  }
+
+  std::string gba_trace_io_value = config.get_string("gba_trace_io", "");
+  if (!gba_trace_io_value.empty()) {
+    auto parsed = parse_bool(gba_trace_io_value);
+    if (parsed.has_value()) {
+      options->gba_trace_io = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_trace_io value '" << gba_trace_io_value << "'\n";
+    }
+  }
+
   std::string headless_value = config.get_string("headless", "");
   if (!headless_value.empty()) {
     auto parsed = parse_bool(headless_value);
@@ -1549,6 +1632,16 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
       options->cgb_color_correction = *parsed;
     } else {
       std::cout << "Config warning: invalid cgb_color_correction value '" << cgb_color_value << "'\n";
+    }
+  }
+
+  std::string gba_color_value = config.get_string("gba_color_correction", "");
+  if (!gba_color_value.empty()) {
+    auto parsed = parse_bool(gba_color_value);
+    if (parsed.has_value()) {
+      options->gba_color_correction = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_color_correction value '" << gba_color_value << "'\n";
     }
   }
 
@@ -2018,6 +2111,57 @@ int main(int argc, char** argv) {
       options.cpu_trace = true;
     } else if (arg == "--boot-trace") {
       options.boot_trace = true;
+    } else if (arg == "--gba-trace") {
+      options.gba_trace = true;
+    } else if (arg == "--gba-trace-after-rom") {
+      options.gba_trace_after_rom = true;
+    } else if (arg == "--gba-trace-steps") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-trace-steps\n";
+        return 1;
+      }
+      options.gba_trace_steps = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-unimp") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-unimp\n";
+        return 1;
+      }
+      options.gba_unimp_limit = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-video-io") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-video-io\n";
+        return 1;
+      }
+      options.gba_watch_video_io = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-swi") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-swi\n";
+        return 1;
+      }
+      options.gba_swi_limit = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-watchdog") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-watchdog\n";
+        return 1;
+      }
+      options.gba_watchdog_steps = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-pc-watch") {
+      if (i + 3 >= argc) {
+        std::cout << "Missing values for --gba-pc-watch\n";
+        return 1;
+      }
+      try {
+        options.gba_pc_watch_start = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_pc_watch_end = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_pc_watch_count = std::max(0, std::stoi(argv[++i]));
+      } catch (...) {
+        std::cout << "Invalid --gba-pc-watch values\n";
+        return 1;
+      }
+    } else if (arg == "--gba-trace-no-io") {
+      options.gba_trace_io = false;
     } else if (arg == "--ui-theme") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --ui-theme\n";
@@ -2054,6 +2198,8 @@ int main(int argc, char** argv) {
       options.debug_window_overlay = true;
     } else if (arg == "--cgb-color-correct") {
       options.cgb_color_correction = true;
+    } else if (arg == "--gba-color-correct") {
+      options.gba_color_correction = true;
     } else if (arg == "--help-overlay") {
       options.show_help_overlay = true;
     }
@@ -2110,6 +2256,57 @@ int main(int argc, char** argv) {
       options.cpu_trace = true;
     } else if (arg == "--boot-trace") {
       options.boot_trace = true;
+    } else if (arg == "--gba-trace") {
+      options.gba_trace = true;
+    } else if (arg == "--gba-trace-after-rom") {
+      options.gba_trace_after_rom = true;
+    } else if (arg == "--gba-trace-steps") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-trace-steps\n";
+        return 1;
+      }
+      options.gba_trace_steps = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-unimp") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-unimp\n";
+        return 1;
+      }
+      options.gba_unimp_limit = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-video-io") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-video-io\n";
+        return 1;
+      }
+      options.gba_watch_video_io = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-swi") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-swi\n";
+        return 1;
+      }
+      options.gba_swi_limit = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-watchdog") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-watchdog\n";
+        return 1;
+      }
+      options.gba_watchdog_steps = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-pc-watch") {
+      if (i + 3 >= argc) {
+        std::cout << "Missing values for --gba-pc-watch\n";
+        return 1;
+      }
+      try {
+        options.gba_pc_watch_start = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_pc_watch_end = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_pc_watch_count = std::max(0, std::stoi(argv[++i]));
+      } catch (...) {
+        std::cout << "Invalid --gba-pc-watch values\n";
+        return 1;
+      }
+    } else if (arg == "--gba-trace-no-io") {
+      options.gba_trace_io = false;
     } else if (arg == "--ui-theme") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --ui-theme\n";
@@ -2146,6 +2343,8 @@ int main(int argc, char** argv) {
       options.debug_window_overlay = true;
     } else if (arg == "--cgb-color-correct") {
       options.cgb_color_correction = true;
+    } else if (arg == "--gba-color-correct") {
+      options.gba_color_correction = true;
     } else if (arg == "--help-overlay") {
       options.show_help_overlay = true;
     } else if (arg == "--system") {
@@ -2390,6 +2589,7 @@ int main(int argc, char** argv) {
   bool boot_rom_last = false;
   bool debug_window_overlay = options.debug_window_overlay;
   bool cgb_color_correction = options.cgb_color_correction;
+  bool gba_color_correction = options.gba_color_correction;
   std::string launcher_error;
 
   auto log_boot_state = [&](long long frame) {
@@ -2457,12 +2657,37 @@ int main(int argc, char** argv) {
       return false;
     }
     if (system == gbemu::core::System::GBA) {
-      std::cout << "GBA core: skeleton CPU/memory map only (placeholder visuals).\n";
+      std::cout << "GBA core: early implementation (not all games boot yet).\n";
     }
 
     core.set_cpu_trace_enabled(options.cpu_trace);
+    if (options.gba_trace_after_rom) {
+      core.set_gba_trace_after_rom(options.gba_trace_steps, options.gba_trace_io);
+    } else if (options.gba_trace) {
+      core.set_gba_trace(options.gba_trace_steps, options.gba_trace_io);
+    }
+    if (options.gba_unimp_limit > 0) {
+      core.set_gba_log_unimplemented(options.gba_unimp_limit);
+    }
+    if (options.gba_watch_video_io > 0) {
+      core.set_gba_watch_video_io(options.gba_watch_video_io);
+    }
+    if (options.gba_swi_limit > 0) {
+      core.set_gba_log_swi(options.gba_swi_limit);
+    }
+    if (options.gba_watchdog_steps > 0) {
+      core.set_gba_watchdog(options.gba_watchdog_steps);
+    }
+    if (options.gba_pc_watch_count > 0 &&
+        options.gba_pc_watch_start.has_value() &&
+        options.gba_pc_watch_end.has_value()) {
+      core.set_gba_pc_watch(*options.gba_pc_watch_start,
+                            *options.gba_pc_watch_end,
+                            options.gba_pc_watch_count);
+    }
     core.set_debug_window_overlay(debug_window_overlay);
     core.set_cgb_color_correction(cgb_color_correction);
+    core.set_gba_color_correction(gba_color_correction);
     key_state = 0xFF;
     pad_state = 0xFF;
     joypad_state = 0xFF;

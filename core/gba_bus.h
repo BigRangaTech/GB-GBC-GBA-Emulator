@@ -22,9 +22,16 @@ class GbaBus {
   std::uint16_t read_io16(std::uint32_t address) const;
   void write_io16_raw(std::uint32_t address, std::uint16_t value);
   void set_if_bits(std::uint16_t mask);
+  void set_trace_io_limit(int limit);
+  void set_watch_video_io_limit(int limit);
+  void set_last_pc(std::uint32_t pc);
+  bool take_postflg_write(std::uint32_t* pc, std::uint8_t* value);
+  bool take_halt_request(bool* stop);
 
   const std::vector<std::uint8_t>& rom() const { return rom_; }
   const std::vector<std::uint8_t>& bios() const { return bios_; }
+  void set_bios_enabled(bool enabled) { bios_enabled_ = enabled; }
+  bool bios_enabled() const { return bios_enabled_; }
 
  private:
   std::uint8_t read_mem(const std::vector<std::uint8_t>& mem,
@@ -34,6 +41,9 @@ class GbaBus {
                  std::uint32_t address,
                  std::uint32_t base,
                  std::uint8_t value);
+  void write8_internal(std::uint32_t address, std::uint8_t value, bool allow_trace);
+  void log_io_write(std::uint32_t address, std::uint32_t value, int bits);
+  void log_video_io_write(std::uint32_t address, std::uint32_t value, int bits);
 
   std::vector<std::uint8_t> bios_;
   std::vector<std::uint8_t> ewram_;
@@ -44,6 +54,19 @@ class GbaBus {
   std::vector<std::uint8_t> oam_;
   std::vector<std::uint8_t> rom_;
   std::vector<std::uint8_t> sram_;
+  std::uint32_t rom_mask_ = 0;
+  bool rom_size_pow2_ = false;
+  bool bios_enabled_ = true;
+  bool trace_io_ = false;
+  int trace_io_limit_ = 0;
+  int watch_video_io_limit_ = 0;
+  int watch_video_io_count_ = 0;
+  std::uint32_t last_pc_ = 0;
+  bool postflg_pending_ = false;
+  std::uint32_t postflg_pc_ = 0;
+  std::uint8_t postflg_value_ = 0;
+  bool halt_requested_ = false;
+  bool stop_requested_ = false;
 };
 
 } // namespace gbemu::core
