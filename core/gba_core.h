@@ -95,6 +95,8 @@ class GbaCore {
   bool vblank_ = false;
   bool hblank_ = false;
   bool halted_ = false;
+  bool swi_wait_active_ = false;
+  std::uint16_t swi_wait_mask_ = 0;
   int trace_steps_remaining_ = 0;
   bool trace_stop_on_rom_ = true;
   bool trace_stop_notified_ = false;

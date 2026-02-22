@@ -146,6 +146,8 @@ void GbaCore::reset() {
   vblank_ = false;
   hblank_ = false;
   halted_ = false;
+  swi_wait_active_ = false;
+  swi_wait_mask_ = 0;
   trace_steps_remaining_ = 0;
   trace_stop_notified_ = false;
   trace_start_on_rom_ = false;
@@ -279,6 +281,8 @@ void GbaCore::step_frame() {
     bool stop = false;
     if (bus_.take_halt_request(&stop)) {
       halted_ = !interrupt_pending();
+      swi_wait_active_ = false;
+      swi_wait_mask_ = 0;
     }
     std::uint32_t post_pc = 0;
     std::uint8_t post_value = 0;
@@ -316,7 +320,15 @@ void GbaCore::step_frame() {
       step_ppu(used);
       service_interrupts();
       cycles += used;
-      if (interrupt_pending()) {
+      if (swi_wait_active_) {
+        std::uint16_t ie = bus_.read_io16(kRegIe);
+        std::uint16_t iflag = bus_.read_io16(kRegIf);
+        if ((ie & iflag & swi_wait_mask_) != 0) {
+          halted_ = false;
+          swi_wait_active_ = false;
+          swi_wait_mask_ = 0;
+        }
+      } else if (interrupt_pending()) {
         halted_ = false;
       }
       continue;
@@ -1225,6 +1237,7 @@ void GbaCore::update_dispstat() {
   std::uint16_t dispstat = bus_.read_io16(kRegDispstat);
   bool was_vblank = (dispstat & 0x0001) != 0;
   bool was_hblank = (dispstat & 0x0002) != 0;
+  bool was_vcount_match = (dispstat & 0x0004) != 0;
   bool now_vblank = vcount_ >= kGbaVblankStart;
   if (now_vblank) {
     dispstat |= 0x0001;
@@ -1257,7 +1270,7 @@ void GbaCore::update_dispstat() {
       request_interrupt(1);
     }
   }
-  if (match && (dispstat & 0x0020)) {
+  if (!was_vcount_match && match && (dispstat & 0x0020)) {
     request_interrupt(2);
   }
   vblank_ = now_vblank;
@@ -1412,14 +1425,14 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
             << std::setw(8) << std::setfill('0') << pc_before << " IMM=0x" << std::setw(2)
             << imm << std::dec << "\n";
 
-  std::uint16_t mask = 0;
+  std::uint16_t wait_mask = 0;
   bool clear_if = false;
   if (imm == 0x05) {
-    mask = 0x0001u;
+    wait_mask = 0x0001u;
     clear_if = true;
   } else if (imm == 0x04) {
     clear_if = (cpu_.reg(0) != 0);
-    mask = static_cast<std::uint16_t>(cpu_.reg(1) & 0xFFFFu);
+    wait_mask = static_cast<std::uint16_t>(cpu_.reg(1) & 0xFFFFu);
   } else if (imm == 0x0B) {
     std::uint32_t src = cpu_.reg(0);
     std::uint32_t dst = cpu_.reg(1);
@@ -1464,15 +1477,22 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     }
   }
 
-  bus_.write_io16_raw(kRegIme, 1);
-  if (clear_if && mask != 0) {
+  if (clear_if && wait_mask != 0) {
     std::uint16_t iflag = bus_.read_io16(kRegIf);
-    bus_.write_io16_raw(kRegIf, static_cast<std::uint16_t>(iflag & ~mask));
+    bus_.write_io16_raw(kRegIf, static_cast<std::uint16_t>(iflag & ~wait_mask));
   }
-  std::uint16_t ie = bus_.read_io16(kRegIe);
-  std::uint16_t iflag = bus_.read_io16(kRegIf);
-  if ((ie & iflag & mask) == 0) {
-    halted_ = true;
+
+  if (wait_mask != 0) {
+    std::uint16_t ie = bus_.read_io16(kRegIe);
+    std::uint16_t iflag = bus_.read_io16(kRegIf);
+    if ((ie & iflag & wait_mask) == 0) {
+      halted_ = true;
+      swi_wait_active_ = true;
+      swi_wait_mask_ = wait_mask;
+    } else {
+      swi_wait_active_ = false;
+      swi_wait_mask_ = 0;
+    }
   }
   cpu_.set_pc(pc_before + (thumb_before ? 2u : 4u));
   return true;

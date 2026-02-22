@@ -416,8 +416,9 @@ std::uint8_t GbaBus::read8(std::uint32_t address) const {
 }
 
 std::uint16_t GbaBus::read16(std::uint32_t address) const {
-  std::uint16_t lo = read8_internal(address, false);
-  std::uint16_t hi = read8_internal(address + 1, false);
+  std::uint32_t aligned = address & ~1u;
+  std::uint16_t lo = read8_internal(aligned, false);
+  std::uint16_t hi = read8_internal(aligned + 1, false);
   std::uint16_t value = static_cast<std::uint16_t>(lo | (hi << 8));
   if (address & 0x1u) {
     value = static_cast<std::uint16_t>((value >> 8) | (value << 8));
@@ -428,10 +429,11 @@ std::uint16_t GbaBus::read16(std::uint32_t address) const {
 }
 
 std::uint32_t GbaBus::read32(std::uint32_t address) const {
-  std::uint32_t b0 = read8_internal(address, false);
-  std::uint32_t b1 = read8_internal(address + 1, false);
-  std::uint32_t b2 = read8_internal(address + 2, false);
-  std::uint32_t b3 = read8_internal(address + 3, false);
+  std::uint32_t aligned = address & ~3u;
+  std::uint32_t b0 = read8_internal(aligned, false);
+  std::uint32_t b1 = read8_internal(aligned + 1, false);
+  std::uint32_t b2 = read8_internal(aligned + 2, false);
+  std::uint32_t b3 = read8_internal(aligned + 3, false);
   std::uint32_t value = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
   std::uint32_t rotate = (address & 0x3u) * 8u;
   if (rotate != 0) {
@@ -452,24 +454,26 @@ void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
   log_io_write(address, value, 16);
   log_video_io_write(address, value, 16);
   log_watchpoint(address, value, 16, true);
-  if (address == kIfAddr) {
+  std::uint32_t aligned = address & ~1u;
+  if (aligned == kIfAddr) {
     std::uint16_t cur = read_io16(kIfAddr);
     std::uint16_t next = static_cast<std::uint16_t>(cur & ~value);
     write_io16_raw(kIfAddr, next);
     return;
   }
-  write8_internal(address, static_cast<std::uint8_t>(value & 0xFF), false);
-  write8_internal(address + 1, static_cast<std::uint8_t>(value >> 8), false);
+  write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false);
+  write8_internal(aligned + 1, static_cast<std::uint8_t>(value >> 8), false);
 }
 
 void GbaBus::write32(std::uint32_t address, std::uint32_t value) {
   log_io_write(address, value, 32);
   log_video_io_write(address, value, 32);
   log_watchpoint(address, value, 32, true);
-  write8_internal(address, static_cast<std::uint8_t>(value & 0xFF), false);
-  write8_internal(address + 1, static_cast<std::uint8_t>((value >> 8) & 0xFF), false);
-  write8_internal(address + 2, static_cast<std::uint8_t>((value >> 16) & 0xFF), false);
-  write8_internal(address + 3, static_cast<std::uint8_t>((value >> 24) & 0xFF), false);
+  std::uint32_t aligned = address & ~3u;
+  write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false);
+  write8_internal(aligned + 1, static_cast<std::uint8_t>((value >> 8) & 0xFF), false);
+  write8_internal(aligned + 2, static_cast<std::uint8_t>((value >> 16) & 0xFF), false);
+  write8_internal(aligned + 3, static_cast<std::uint8_t>((value >> 24) & 0xFF), false);
 }
 
 std::uint16_t GbaBus::read_io16(std::uint32_t address) const {
