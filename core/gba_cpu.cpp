@@ -655,7 +655,13 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t val = operand_reg(static_cast<int>(rs));
       switch (opcode) {
         case 0x0: {
-          regs_.r[rd] = operand_reg(static_cast<int>(rd)) + val;
+          std::uint32_t result = operand_reg(static_cast<int>(rd)) + val;
+          if (rd == 15) {
+            // ADD (high register) to PC is a branch in Thumb state; bit0 is ignored.
+            regs_.r[15] = result & ~1u;
+          } else {
+            regs_.r[rd] = result;
+          }
           return 2;
         }
         case 0x1: {
@@ -666,7 +672,7 @@ int GbaCpu::step(GbaBus* bus) {
         }
         case 0x2: {
           if (rd == 15) {
-            set_thumb((val & 1u) != 0);
+            // MOV (high register) to PC stays in Thumb; use BX for interworking.
             regs_.r[15] = val & ~1u;
           } else {
             regs_.r[rd] = val;
@@ -674,16 +680,9 @@ int GbaCpu::step(GbaBus* bus) {
           return 2;
         }
         case 0x3: {
-          if (h1) {
-            std::uint32_t target = val;
-            regs_.r[14] = (pc + 2) | 1u;
-            set_thumb((target & 1u) != 0);
-            regs_.r[15] = target & ~1u;
-          } else {
-            std::uint32_t target = val;
-            set_thumb((target & 1u) != 0);
-            regs_.r[15] = target & ~1u;
-          }
+          std::uint32_t target = val;
+          set_thumb((target & 1u) != 0);
+          regs_.r[15] = target & ~1u;
           return 2;
         }
         default:
@@ -947,7 +946,8 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint8_t cond = static_cast<std::uint8_t>((op >> 8) & 0x0F);
       std::int8_t imm8 = static_cast<std::int8_t>(op & 0xFF);
       if (cond_passed(cond)) {
-        regs_.r[15] = pc + 4 + (static_cast<std::int32_t>(imm8) << 1);
+        std::int32_t offset = static_cast<std::int32_t>(imm8) * 2;
+        regs_.r[15] = pc + 4 + static_cast<std::uint32_t>(offset);
       }
       return 2;
     }
@@ -956,7 +956,8 @@ int GbaCpu::step(GbaBus* bus) {
       if (imm11 & 0x400) {
         imm11 |= ~0x7FF;
       }
-      regs_.r[15] = pc + 4 + (imm11 << 1);
+      std::int32_t offset = imm11 * 2;
+      regs_.r[15] = pc + 4 + static_cast<std::uint32_t>(offset);
       return 2;
     }
     if ((op & 0xF800) == 0xF000) {
@@ -964,8 +965,8 @@ int GbaCpu::step(GbaBus* bus) {
       if (imm11 & 0x400) {
         imm11 |= ~0x7FF;
       }
-      std::uint32_t offset = static_cast<std::uint32_t>(imm11 << 12);
-      regs_.r[14] = (pc + 4) + offset;
+      std::int32_t offset = imm11 * 4096;
+      regs_.r[14] = (pc + 4) + static_cast<std::uint32_t>(offset);
       return 2;
     }
     if ((op & 0xF800) == 0xF800) {
@@ -1037,7 +1038,8 @@ int GbaCpu::step(GbaBus* bus) {
     if (imm24 & 0x00800000) {
       imm24 |= ~0x00FFFFFF;
     }
-    std::uint32_t target = pc + 8 + (imm24 << 2);
+    std::int32_t offset = imm24 * 4;
+    std::uint32_t target = pc + 8 + static_cast<std::uint32_t>(offset);
     if (op & (1u << 24)) {
       regs_.r[14] = pc + 4;
     }

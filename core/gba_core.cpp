@@ -1290,14 +1290,16 @@ void GbaCore::service_interrupts() {
     return;
   }
   std::uint32_t pc = cpu_.pc();
-  std::uint32_t lr = pc + (cpu_.thumb() ? 2u : 4u);
+  // service_interrupts() runs between instructions in this core, so PC already
+  // points at the next instruction to execute. BIOS IRQ return uses
+  // `subs pc, lr, #4`, so set LR to PC+4 to resume at current PC.
+  std::uint32_t lr = pc + 4u;
   cpu_.set_spsr_for_mode(0x12, cpu_.cpsr());
   cpu_.set_mode(0x12);
   cpu_.set_reg(14, lr);
   cpu_.set_thumb(false);
   cpu_.set_pc(0x00000018u);
   cpu_.set_irq_disable(true);
-  bus_.write_io16_raw(kRegIme, 0);
 }
 
 void GbaCore::watchdog_tick(std::uint32_t pc) {
