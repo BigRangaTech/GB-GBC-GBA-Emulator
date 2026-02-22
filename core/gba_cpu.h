@@ -28,6 +28,7 @@ class GbaCpu {
   void set_mode(std::uint32_t mode);
   void set_irq_disable(bool disabled);
   void set_spsr_for_mode(std::uint32_t mode, std::uint32_t value);
+  void set_banked_sp(std::uint32_t mode, std::uint32_t value);
   void set_log_unimplemented(int limit);
   void set_log_swi(int limit);
   int unimplemented_count() const { return unimplemented_count_; }

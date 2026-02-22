@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "gba_bus.h"
@@ -30,11 +31,28 @@ class GbaCore {
   void set_trace_after_rom(int steps, bool trace_io);
   void set_log_unimplemented(int limit) { cpu_.set_log_unimplemented(limit); }
   void set_watch_video_io(int limit) { bus_.set_watch_video_io_limit(limit); }
+  void set_watch_io_reads(int limit) { bus_.set_watch_io_read_limit(limit); }
+  void set_mem_watch(std::uint32_t start,
+                     std::uint32_t end,
+                     int count,
+                     bool read,
+                     bool write);
   void set_log_swi(int limit) { cpu_.set_log_swi(limit); }
   void set_watchdog_steps(int steps);
   void set_pc_watch(std::uint32_t start, std::uint32_t end, int count);
   void set_keyinput(std::uint16_t value);
   void set_gba_color_correction(bool enabled) { gba_color_correct_ = enabled; }
+  void set_auto_handoff(bool enabled) { auto_handoff_enabled_ = enabled; }
+  void set_fastboot(bool enabled);
+  void handoff_to_rom();
+  void set_auto_patch_hang(bool enabled) { auto_patch_hang_ = enabled; }
+  void set_auto_patch_threshold(int count) { auto_patch_threshold_ = count; }
+  void set_auto_patch_span(std::uint32_t span) { auto_patch_span_ = span; }
+  void set_auto_patch_range(std::uint32_t start, std::uint32_t end) {
+    auto_patch_start_ = start;
+    auto_patch_end_ = end;
+  }
+  void set_hle_swi(bool enabled) { hle_swi_enabled_ = enabled; }
 
  private:
   void render_placeholder();
@@ -89,6 +107,19 @@ class GbaCore {
   int pc_watch_remaining_ = 0;
   std::uint16_t keyinput_ = 0x03FF;
   bool gba_color_correct_ = false;
+  bool auto_handoff_enabled_ = true;
+  bool fastboot_enabled_ = false;
+  bool auto_patch_hang_ = false;
+  bool hle_swi_enabled_ = false;
+  int auto_patch_threshold_ = 0;
+  std::uint32_t auto_patch_span_ = 0x40;
+  std::uint32_t auto_patch_start_ = 0;
+  std::uint32_t auto_patch_end_ = 0;
+  std::uint32_t loop_pc_ = 0;
+  std::uint32_t loop_target_ = 0;
+  int loop_count_ = 0;
+  bool loop_thumb_ = false;
+  std::unordered_set<std::uint32_t> auto_patched_pcs_;
   int watchdog_steps_ = 0;
   int watchdog_counter_ = 0;
   struct WatchdogSample {
@@ -128,6 +159,11 @@ class GbaCore {
   void watchdog_tick(std::uint32_t pc);
   void report_watchdog();
   void fast_boot_to_rom();
+  bool handle_swi_hle(std::uint32_t pc_before, bool thumb_before, std::uint32_t op_before, int* cycles_out);
+  void auto_patch_tick(std::uint32_t pc_before,
+                       std::uint32_t pc_after,
+                       std::uint32_t op_before,
+                       bool thumb_before);
 };
 
 } // namespace gbemu::core

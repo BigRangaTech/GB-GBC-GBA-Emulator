@@ -164,6 +164,20 @@ void EmulatorCore::set_gba_color_correction(bool enabled) {
   gba_.set_gba_color_correction(enabled);
 }
 
+void EmulatorCore::set_gba_auto_handoff(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_auto_handoff(enabled);
+}
+
+void EmulatorCore::set_gba_fastboot(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_fastboot(enabled);
+}
+
 void EmulatorCore::set_gba_log_unimplemented(int limit) {
   if (system_ != System::GBA) {
     return;
@@ -176,6 +190,24 @@ void EmulatorCore::set_gba_watch_video_io(int limit) {
     return;
   }
   gba_.set_watch_video_io(limit);
+}
+
+void EmulatorCore::set_gba_watch_io_reads(int limit) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_watch_io_reads(limit);
+}
+
+void EmulatorCore::set_gba_mem_watch(std::uint32_t start,
+                                     std::uint32_t end,
+                                     int count,
+                                     bool read,
+                                     bool write) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_mem_watch(start, end, count, read, write);
 }
 
 void EmulatorCore::set_gba_log_swi(int limit) {
@@ -197,6 +229,41 @@ void EmulatorCore::set_gba_pc_watch(std::uint32_t start, std::uint32_t end, int 
     return;
   }
   gba_.set_pc_watch(start, end, count);
+}
+
+void EmulatorCore::set_gba_auto_patch_hang(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_auto_patch_hang(enabled);
+}
+
+void EmulatorCore::set_gba_auto_patch_threshold(int count) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_auto_patch_threshold(count);
+}
+
+void EmulatorCore::set_gba_auto_patch_span(std::uint32_t span) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_auto_patch_span(span);
+}
+
+void EmulatorCore::set_gba_auto_patch_range(std::uint32_t start, std::uint32_t end) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_auto_patch_range(start, end);
+}
+
+void EmulatorCore::set_gba_hle_swi(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_hle_swi(enabled);
 }
 
 void EmulatorCore::set_joypad_state(std::uint8_t state) {

@@ -38,11 +38,24 @@ class EmulatorCore {
   void set_debug_window_overlay(bool enabled);
   void set_cgb_color_correction(bool enabled);
   void set_gba_color_correction(bool enabled);
+  void set_gba_auto_handoff(bool enabled);
+  void set_gba_fastboot(bool enabled);
   void set_gba_log_unimplemented(int limit);
   void set_gba_watch_video_io(int limit);
+  void set_gba_watch_io_reads(int limit);
+  void set_gba_mem_watch(std::uint32_t start,
+                         std::uint32_t end,
+                         int count,
+                         bool read,
+                         bool write);
   void set_gba_log_swi(int limit);
   void set_gba_watchdog(int steps);
   void set_gba_pc_watch(std::uint32_t start, std::uint32_t end, int count);
+  void set_gba_auto_patch_hang(bool enabled);
+  void set_gba_auto_patch_threshold(int count);
+  void set_gba_auto_patch_span(std::uint32_t span);
+  void set_gba_auto_patch_range(std::uint32_t start, std::uint32_t end);
+  void set_gba_hle_swi(bool enabled);
   void set_joypad_state(std::uint8_t state);
   void request_interrupt(std::uint8_t bit);
   void generate_audio(int sample_rate, int samples, std::vector<std::int16_t>* out);

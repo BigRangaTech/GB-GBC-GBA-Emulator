@@ -2,6 +2,7 @@
 
 #include "gba_bus.h"
 
+#include <bit>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -211,6 +212,38 @@ void GbaCpu::set_spsr_for_mode(std::uint32_t mode, std::uint32_t value) {
     if ((regs_.cpsr & 0x1F) == (mode & 0x1F)) {
       spsr_ = value;
     }
+  }
+}
+
+void GbaCpu::set_banked_sp(std::uint32_t mode, std::uint32_t value) {
+  switch (mode & 0x1F) {
+    case 0x10:
+    case 0x1F:
+      banked_r13_usr_ = value;
+      break;
+    case 0x11:
+      banked_r13_fiq_ = value;
+      break;
+    case 0x12:
+      banked_r13_irq_ = value;
+      break;
+    case 0x13:
+      banked_r13_svc_ = value;
+      break;
+    case 0x17:
+      banked_r13_abt_ = value;
+      break;
+    case 0x1B:
+      banked_r13_und_ = value;
+      break;
+    default:
+      break;
+  }
+  std::uint32_t current = regs_.cpsr & 0x1F;
+  if ((current == 0x10 || current == 0x1F) && (mode == 0x10 || mode == 0x1F)) {
+    regs_.r[13] = value;
+  } else if (current == (mode & 0x1F)) {
+    regs_.r[13] = value;
   }
 }
 
@@ -740,7 +773,7 @@ int GbaCpu::step(GbaBus* bus) {
           break;
       }
     }
-    if ((op & 0xF800) == 0x6000) {
+    if ((op & 0xF000) == 0x6000) {
       bool load = (op & 0x0800) != 0;
       std::uint32_t imm5 = (op >> 6) & 0x1F;
       int rb = (op >> 3) & 0x7;
@@ -753,7 +786,7 @@ int GbaCpu::step(GbaBus* bus) {
       }
       return 3;
     }
-    if ((op & 0xF800) == 0x7000) {
+    if ((op & 0xF000) == 0x7000) {
       bool load = (op & 0x0800) != 0;
       std::uint32_t imm5 = (op >> 6) & 0x1F;
       int rb = (op >> 3) & 0x7;
@@ -791,14 +824,14 @@ int GbaCpu::step(GbaBus* bus) {
       }
       return 3;
     }
-    if ((op & 0xF000) == 0xA000) {
+    if ((op & 0xF800) == 0xA000) {
       int rd = (op >> 8) & 0x7;
       std::uint32_t imm = (op & 0xFF) << 2;
       std::uint32_t base = (pc + 4) & ~3u;
       regs_.r[rd] = base + imm;
       return 2;
     }
-    if ((op & 0xF000) == 0xA800) {
+    if ((op & 0xF800) == 0xA800) {
       int rd = (op >> 8) & 0x7;
       std::uint32_t imm = (op & 0xFF) << 2;
       regs_.r[rd] = regs_.r[13] + imm;
@@ -1109,6 +1142,10 @@ int GbaCpu::step(GbaBus* bus) {
         }
       }
     } else {
+      std::uint32_t mode = regs_.cpsr & 0x1F;
+      if (mode == 0x10) {
+        mask &= 0xFF000000u;
+      }
       set_cpsr((regs_.cpsr & ~mask) | (value & mask));
     }
     return 4;
@@ -1263,6 +1300,9 @@ int GbaCpu::step(GbaBus* bus) {
     bool l = (op & (1u << 20)) != 0;
     std::uint32_t rn = (op >> 16) & 0xF;
     std::uint32_t reg_list = op & 0xFFFF;
+    if (reg_list == 0) {
+      reg_list = 1u << 15;
+    }
     int count = 0;
     for (int i = 0; i < 16; ++i) {
       if (reg_list & (1u << i)) {
@@ -1354,7 +1394,7 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t delta = static_cast<std::uint32_t>(count) * 4u;
       regs_.r[rn] = u ? (regs_.r[rn] + delta) : (regs_.r[rn] - delta);
     }
-    return 4;
+    return 4 + count;
   }
 
   if (((op >> 25) & 0x7) == 0x1) {

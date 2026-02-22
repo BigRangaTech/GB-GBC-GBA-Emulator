@@ -29,6 +29,14 @@ constexpr std::uint32_t kRomEnd = 0x0DFFFFFF;
 constexpr std::uint32_t kSramBase = 0x0E000000;
 constexpr std::uint32_t kSramSize = 0x00010000;
 constexpr std::uint32_t kIfAddr = 0x04000202;
+constexpr std::uint32_t kRegDispcnt = 0x04000000;
+constexpr std::uint32_t kRegDispstat = 0x04000004;
+constexpr std::uint32_t kRegVcount = 0x04000006;
+constexpr std::uint32_t kRegKeyinput = 0x04000130;
+constexpr std::uint32_t kRegIe = 0x04000200;
+constexpr std::uint32_t kRegIme = 0x04000208;
+constexpr std::uint32_t kRegPostflg = 0x04000300;
+constexpr std::uint32_t kRegHaltcnt = 0x04000301;
 
 } // namespace
 
@@ -114,6 +122,43 @@ void GbaBus::set_watch_video_io_limit(int limit) {
   watch_video_io_count_ = 0;
 }
 
+void GbaBus::set_watch_io_read_limit(int limit) {
+  if (limit < 0) {
+    limit = 0;
+  }
+  watch_io_read_limit_ = limit;
+  watch_io_read_count_ = 0;
+  watch_io_read_enabled_ = watch_io_read_limit_ > 0;
+}
+
+void GbaBus::clear_watchpoints() {
+  watchpoints_.clear();
+  watchpoint_count_ = 0;
+}
+
+void GbaBus::add_watchpoint(std::uint32_t start,
+                            std::uint32_t end,
+                            bool read,
+                            bool write) {
+  if (start > end) {
+    std::swap(start, end);
+  }
+  Watchpoint watch;
+  watch.start = start;
+  watch.end = end;
+  watch.read = read;
+  watch.write = write;
+  watchpoints_.push_back(watch);
+}
+
+void GbaBus::set_watchpoint_limit(int limit) {
+  if (limit < 0) {
+    limit = 0;
+  }
+  watchpoint_limit_ = limit;
+  watchpoint_count_ = 0;
+}
+
 void GbaBus::set_last_pc(std::uint32_t pc) {
   last_pc_ = pc;
 }
@@ -189,6 +234,80 @@ void GbaBus::log_video_io_write(std::uint32_t address, std::uint32_t value, int 
   }
 }
 
+void GbaBus::log_io_read(std::uint32_t address, std::uint32_t value, int bits) const {
+  if (!watch_io_read_enabled_ || watch_io_read_limit_ <= 0 ||
+      watch_io_read_count_ >= watch_io_read_limit_) {
+    return;
+  }
+  if (address < kIoBase || address >= kIoBase + kIoSize) {
+    return;
+  }
+  std::uint32_t base = address;
+  if (bits == 8 || bits == 16) {
+    base &= ~1u;
+  } else if (bits == 32) {
+    base &= ~3u;
+  }
+  switch (base) {
+    case kRegDispcnt:
+    case kRegDispstat:
+    case kRegVcount:
+    case kRegKeyinput:
+    case kRegIe:
+    case kIfAddr:
+    case kRegIme:
+    case kRegPostflg:
+    case kRegHaltcnt:
+      break;
+    default:
+      return;
+  }
+  int width = bits / 4;
+  std::uint32_t mask = 0xFFFFFFFFu;
+  if (bits < 32) {
+    mask = (1u << bits) - 1u;
+  }
+  std::cout << "GBA IO R" << bits << " 0x" << std::hex << std::setw(8)
+            << std::setfill('0') << base << " = 0x" << std::setw(width)
+            << (value & mask) << " PC=0x" << std::setw(8) << last_pc_
+            << std::dec << "\n";
+  ++watch_io_read_count_;
+}
+
+void GbaBus::log_watchpoint(std::uint32_t address,
+                            std::uint32_t value,
+                            int bits,
+                            bool write) const {
+  if (watchpoints_.empty() || watchpoint_limit_ == 0) {
+    return;
+  }
+  if (watchpoint_limit_ > 0 && watchpoint_count_ >= watchpoint_limit_) {
+    return;
+  }
+  for (const auto& watch : watchpoints_) {
+    if (address < watch.start || address > watch.end) {
+      continue;
+    }
+    if (write && !watch.write) {
+      continue;
+    }
+    if (!write && !watch.read) {
+      continue;
+    }
+    int width = bits / 4;
+    std::uint32_t mask = 0xFFFFFFFFu;
+    if (bits < 32) {
+      mask = (1u << bits) - 1u;
+    }
+    std::cout << "GBA WATCH " << (write ? "W" : "R") << bits << " 0x"
+              << std::hex << std::setw(8) << std::setfill('0') << address
+              << " = 0x" << std::setw(width) << (value & mask)
+              << " PC=0x" << std::setw(8) << last_pc_ << std::dec << "\n";
+    ++watchpoint_count_;
+    break;
+  }
+}
+
 void GbaBus::write8_internal(std::uint32_t address, std::uint8_t value, bool allow_trace) {
   if (allow_trace) {
     log_io_write(address, value, 8);
@@ -242,84 +361,97 @@ void GbaBus::write8_internal(std::uint32_t address, std::uint8_t value, bool all
   }
 }
 
-std::uint8_t GbaBus::read8(std::uint32_t address) const {
+std::uint8_t GbaBus::read8_internal(std::uint32_t address, bool allow_log) const {
+  std::uint8_t value = 0xFF;
   if (bios_enabled_ && address < kBiosBase + kBiosSize) {
-    return read_mem(bios_, address, kBiosBase);
-  }
-  if (address >= kEwramBase && address < kEwramBase + kEwramMirrorSize) {
+    value = read_mem(bios_, address, kBiosBase);
+  } else if (address >= kEwramBase && address < kEwramBase + kEwramMirrorSize) {
     std::uint32_t offset = (address - kEwramBase) & (kEwramSize - 1u);
-    return ewram_[offset];
-  }
-  if (address >= kIwramBase && address < kIwramBase + kIwramMirrorSize) {
+    value = ewram_[offset];
+  } else if (address >= kIwramBase && address < kIwramBase + kIwramMirrorSize) {
     std::uint32_t offset = (address - kIwramBase) & (kIwramSize - 1u);
-    return iwram_[offset];
-  }
-  if (address >= kIoBase && address < kIoBase + kIoSize) {
-    return read_mem(io_, address, kIoBase);
-  }
-  if (address >= kPaletteBase && address < kPaletteBase + kPaletteSize) {
-    return read_mem(palette_, address, kPaletteBase);
-  }
-  if (address >= kVramBase && address < kVramBase + kVramSize) {
-    return read_mem(vram_, address, kVramBase);
-  }
-  if (address >= kOamBase && address < kOamBase + kOamSize) {
-    return read_mem(oam_, address, kOamBase);
-  }
-  if (address >= kSramBase && address < kSramBase + kSramSize) {
-    return read_mem(sram_, address, kSramBase);
-  }
-  if (address >= kRomBase && address <= kRomEnd) {
+    value = iwram_[offset];
+  } else if (address >= kIoBase && address < kIoBase + kIoSize) {
+    value = read_mem(io_, address, kIoBase);
+  } else if (address >= kPaletteBase && address < kPaletteBase + kPaletteSize) {
+    value = read_mem(palette_, address, kPaletteBase);
+  } else if (address >= kVramBase && address < kVramBase + kVramSize) {
+    value = read_mem(vram_, address, kVramBase);
+  } else if (address >= kOamBase && address < kOamBase + kOamSize) {
+    value = read_mem(oam_, address, kOamBase);
+  } else if (address >= kSramBase && address < kSramBase + kSramSize) {
+    value = read_mem(sram_, address, kSramBase);
+  } else if (address >= kRomBase && address <= kRomEnd) {
     if (rom_.empty()) {
-      return 0xFF;
-    }
-    std::uint32_t offset = (address - kRomBase) & 0x01FFFFFFu;
-    if (rom_mask_ != 0) {
-      offset &= rom_mask_;
-    }
-    if (offset >= rom_.size()) {
-      if (!rom_size_pow2_ && !rom_.empty()) {
-        offset %= static_cast<std::uint32_t>(rom_.size());
-      } else {
-        return 0xFF;
+      value = 0xFF;
+    } else {
+      std::uint32_t offset = (address - kRomBase) & 0x01FFFFFFu;
+      if (rom_mask_ != 0) {
+        offset &= rom_mask_;
       }
+      if (offset >= rom_.size()) {
+        if (!rom_size_pow2_ && !rom_.empty()) {
+          offset %= static_cast<std::uint32_t>(rom_.size());
+        } else {
+          value = 0xFF;
+          if (allow_log) {
+            log_io_read(address, value, 8);
+          }
+          return value;
+        }
+      }
+      value = rom_[offset];
     }
-    return rom_[offset];
   }
-  return 0xFF;
-}
-
-std::uint16_t GbaBus::read16(std::uint32_t address) const {
-  std::uint16_t lo = read8(address);
-  std::uint16_t hi = read8(address + 1);
-  std::uint16_t value = static_cast<std::uint16_t>(lo | (hi << 8));
-  if (address & 0x1u) {
-    value = static_cast<std::uint16_t>((value >> 8) | (value << 8));
+  if (allow_log) {
+    log_io_read(address, value, 8);
   }
   return value;
 }
 
+std::uint8_t GbaBus::read8(std::uint32_t address) const {
+  std::uint8_t value = read8_internal(address, true);
+  log_watchpoint(address, value, 8, false);
+  return value;
+}
+
+std::uint16_t GbaBus::read16(std::uint32_t address) const {
+  std::uint16_t lo = read8_internal(address, false);
+  std::uint16_t hi = read8_internal(address + 1, false);
+  std::uint16_t value = static_cast<std::uint16_t>(lo | (hi << 8));
+  if (address & 0x1u) {
+    value = static_cast<std::uint16_t>((value >> 8) | (value << 8));
+  }
+  log_io_read(address, value, 16);
+  log_watchpoint(address, value, 16, false);
+  return value;
+}
+
 std::uint32_t GbaBus::read32(std::uint32_t address) const {
-  std::uint32_t b0 = read8(address);
-  std::uint32_t b1 = read8(address + 1);
-  std::uint32_t b2 = read8(address + 2);
-  std::uint32_t b3 = read8(address + 3);
+  std::uint32_t b0 = read8_internal(address, false);
+  std::uint32_t b1 = read8_internal(address + 1, false);
+  std::uint32_t b2 = read8_internal(address + 2, false);
+  std::uint32_t b3 = read8_internal(address + 3, false);
   std::uint32_t value = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
   std::uint32_t rotate = (address & 0x3u) * 8u;
   if (rotate != 0) {
     value = (value >> rotate) | (value << (32 - rotate));
   }
+  log_io_read(address, value, 32);
+  log_watchpoint(address, value, 32, false);
   return value;
 }
 
 void GbaBus::write8(std::uint32_t address, std::uint8_t value) {
   log_video_io_write(address, value, 8);
+  log_watchpoint(address, value, 8, true);
   write8_internal(address, value, true);
 }
 
 void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
   log_io_write(address, value, 16);
   log_video_io_write(address, value, 16);
+  log_watchpoint(address, value, 16, true);
   if (address == kIfAddr) {
     std::uint16_t cur = read_io16(kIfAddr);
     std::uint16_t next = static_cast<std::uint16_t>(cur & ~value);
@@ -333,6 +465,7 @@ void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
 void GbaBus::write32(std::uint32_t address, std::uint32_t value) {
   log_io_write(address, value, 32);
   log_video_io_write(address, value, 32);
+  log_watchpoint(address, value, 32, true);
   write8_internal(address, static_cast<std::uint8_t>(value & 0xFF), false);
   write8_internal(address + 1, static_cast<std::uint8_t>((value >> 8) & 0xFF), false);
   write8_internal(address + 2, static_cast<std::uint8_t>((value >> 16) & 0xFF), false);
@@ -362,6 +495,53 @@ void GbaBus::set_if_bits(std::uint16_t mask) {
   std::uint16_t cur = read_io16(kIfAddr);
   std::uint16_t next = static_cast<std::uint16_t>(cur | mask);
   write_io16_raw(kIfAddr, next);
+}
+
+bool GbaBus::rom_offset_for(std::uint32_t address, std::uint32_t* offset) const {
+  if (!offset || address < kRomBase || address > kRomEnd || rom_.empty()) {
+    return false;
+  }
+  std::uint32_t calc = (address - kRomBase) & 0x01FFFFFFu;
+  if (rom_mask_ != 0) {
+    calc &= rom_mask_;
+  }
+  if (calc >= rom_.size()) {
+    if (!rom_size_pow2_) {
+      calc %= static_cast<std::uint32_t>(rom_.size());
+    } else {
+      return false;
+    }
+  }
+  *offset = calc;
+  return true;
+}
+
+bool GbaBus::patch_rom16(std::uint32_t address, std::uint16_t value) {
+  std::uint32_t offset = 0;
+  if (!rom_offset_for(address, &offset)) {
+    return false;
+  }
+  if (offset + 1 >= rom_.size()) {
+    return false;
+  }
+  rom_[offset] = static_cast<std::uint8_t>(value & 0xFF);
+  rom_[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFF);
+  return true;
+}
+
+bool GbaBus::patch_rom32(std::uint32_t address, std::uint32_t value) {
+  std::uint32_t offset = 0;
+  if (!rom_offset_for(address, &offset)) {
+    return false;
+  }
+  if (offset + 3 >= rom_.size()) {
+    return false;
+  }
+  rom_[offset] = static_cast<std::uint8_t>(value & 0xFF);
+  rom_[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFF);
+  rom_[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFF);
+  rom_[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFF);
+  return true;
 }
 
 } // namespace gbemu::core

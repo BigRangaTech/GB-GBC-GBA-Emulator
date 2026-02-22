@@ -309,6 +309,7 @@ core/CMakeFiles/gbemu_core.dir/core.cpp.o
  /usr/include/c++/15/bits/stringfwd.h
  /usr/include/c++/15/bits/unique_ptr.h
  /usr/include/c++/15/bits/unordered_map.h
+ /usr/include/c++/15/bits/unordered_set.h
  /usr/include/c++/15/bits/uses_allocator.h
  /usr/include/c++/15/bits/uses_allocator_args.h
  /usr/include/c++/15/bits/utility.h
@@ -355,6 +356,7 @@ core/CMakeFiles/gbemu_core.dir/core.cpp.o
  /usr/include/c++/15/type_traits
  /usr/include/c++/15/typeinfo
  /usr/include/c++/15/unordered_map
+ /usr/include/c++/15/unordered_set
  /usr/include/c++/15/vector
  /usr/include/ctype.h
  /usr/include/endian.h
@@ -995,6 +997,7 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o
  /usr/include/c++/15/bits/stringfwd.h
  /usr/include/c++/15/bits/uniform_int_dist.h
  /usr/include/c++/15/bits/unordered_map.h
+ /usr/include/c++/15/bits/unordered_set.h
  /usr/include/c++/15/bits/uses_allocator.h
  /usr/include/c++/15/bits/uses_allocator_args.h
  /usr/include/c++/15/bits/utility.h
@@ -1044,6 +1047,7 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o
  /usr/include/c++/15/type_traits
  /usr/include/c++/15/typeinfo
  /usr/include/c++/15/unordered_map
+ /usr/include/c++/15/unordered_set
  /usr/include/c++/15/vector
  /usr/include/ctype.h
  /usr/include/endian.h

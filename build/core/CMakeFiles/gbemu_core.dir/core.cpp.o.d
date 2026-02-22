@@ -142,7 +142,8 @@ core/CMakeFiles/gbemu_core.dir/core.cpp.o: \
  /usr/include/c++/15/ext/aligned_buffer.h \
  /usr/include/c++/15/bits/enable_special_members.h \
  /usr/include/c++/15/bits/node_handle.h \
- /usr/include/c++/15/bits/erase_if.h \
+ /usr/include/c++/15/bits/erase_if.h /usr/include/c++/15/unordered_set \
+ /usr/include/c++/15/bits/unordered_set.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h \
  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu.h \

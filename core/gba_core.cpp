@@ -44,7 +44,17 @@ std::uint32_t bgr555_to_argb(std::uint16_t pixel) {
 bool GbaCore::load(const std::vector<std::uint8_t>& rom,
                    const std::vector<std::uint8_t>& bios,
                    std::string* error) {
-  if (!bus_.load(rom, bios, error)) {
+  std::vector<std::uint8_t> rom_data = rom;
+  if (rom_data.size() >= 0xA0 && bios.size() >= 0xA0) {
+    auto rom_logo_begin = rom_data.begin() + 0x04;
+    auto rom_logo_end = rom_data.begin() + 0xA0;
+    auto bios_logo_begin = bios.begin() + 0x04;
+    if (!std::equal(rom_logo_begin, rom_logo_end, bios_logo_begin)) {
+      std::copy(bios_logo_begin, bios_logo_begin + (rom_logo_end - rom_logo_begin), rom_logo_begin);
+      std::cout << "GBA ROM logo patched to match BIOS logo\n";
+    }
+  }
+  if (!bus_.load(rom_data, bios, error)) {
     return false;
   }
   reset();
@@ -92,6 +102,21 @@ void GbaCore::set_watchdog_steps(int steps) {
   watchdog_.clear();
 }
 
+void GbaCore::set_mem_watch(std::uint32_t start,
+                            std::uint32_t end,
+                            int count,
+                            bool read,
+                            bool write) {
+  if (count < 0) {
+    count = 0;
+  }
+  bus_.clear_watchpoints();
+  bus_.set_watchpoint_limit(count);
+  if (count > 0 && (read || write)) {
+    bus_.add_watchpoint(start, end, read, write);
+  }
+}
+
 void GbaCore::set_pc_watch(std::uint32_t start, std::uint32_t end, int count) {
   if (count < 0) {
     count = 0;
@@ -111,6 +136,11 @@ void GbaCore::reset() {
   frame_counter_ = 0;
   bios_handoff_done_ = false;
   bios_watchdog_cycles_ = 0;
+  loop_pc_ = 0;
+  loop_target_ = 0;
+  loop_count_ = 0;
+  loop_thumb_ = false;
+  auto_patched_pcs_.clear();
   line_cycles_ = 0;
   vcount_ = 0;
   vblank_ = false;
@@ -167,6 +197,9 @@ void GbaCore::reset() {
   for (auto& chan : dma_) {
     chan.active = false;
   }
+  if (fastboot_enabled_) {
+    fast_boot_to_rom();
+  }
 }
 
 void GbaCore::set_keyinput(std::uint16_t value) {
@@ -175,16 +208,29 @@ void GbaCore::set_keyinput(std::uint16_t value) {
   bus_.write_io16_raw(0x04000130u, keyinput_);
 }
 
+void GbaCore::set_fastboot(bool enabled) {
+  fastboot_enabled_ = enabled;
+  if (fastboot_enabled_) {
+    fast_boot_to_rom();
+  }
+}
+
 void GbaCore::step_frame() {
   int cycles = 0;
   auto step_once = [this, &cycles]() -> bool {
     std::uint32_t pc_before = cpu_.pc();
+    bool thumb_before = cpu_.thumb();
     bus_.set_bios_enabled(pc_before < 0x00004000u);
     bus_.set_last_pc(pc_before);
+    std::uint32_t op_before = 0;
+    if (auto_patch_hang_ || hle_swi_enabled_) {
+      op_before = thumb_before ? bus_.read16(pc_before) : bus_.read32(pc_before);
+    }
     if (pc_watch_enabled_ && pc_watch_remaining_ > 0 &&
         pc_before >= pc_watch_start_ && pc_before <= pc_watch_end_) {
-      bool thumb = cpu_.thumb();
-      std::uint32_t op = thumb ? bus_.read16(pc_before) : bus_.read32(pc_before);
+      bool thumb = thumb_before;
+      std::uint32_t op = (op_before != 0) ? op_before
+                                          : (thumb ? bus_.read16(pc_before) : bus_.read32(pc_before));
       std::ostringstream line;
       line << "GBA PCWATCH " << (thumb ? "T" : "A") << " PC=0x"
            << std::hex << std::setw(8) << std::setfill('0') << pc_before
@@ -203,10 +249,27 @@ void GbaCore::step_frame() {
       std::cout << line.str() << "\n";
       --pc_watch_remaining_;
     }
+    if (hle_swi_enabled_) {
+      int hle_cycles = 0;
+      if (handle_swi_hle(pc_before, thumb_before, op_before, &hle_cycles)) {
+        if (hle_cycles <= 0) {
+          hle_cycles = 2;
+        }
+        watchdog_tick(pc_before);
+        step_timers(hle_cycles);
+        step_dma();
+        step_ppu(hle_cycles);
+        service_interrupts();
+        cycles += hle_cycles;
+        return true;
+      }
+    }
+
     int used = cpu_.step(&bus_);
     if (used <= 0) {
       return false;
     }
+    auto_patch_tick(pc_before, cpu_.pc(), op_before, thumb_before);
     watchdog_tick(pc_before);
     step_timers(used);
     step_dma();
@@ -226,6 +289,11 @@ void GbaCore::step_frame() {
                 << " CPSR=0x" << std::setw(8) << cpu_.cpsr() << std::dec << "\n";
       if (trace_start_on_rom_ && trace_steps_remaining_ > 0) {
         post_trace_remaining_ = trace_steps_remaining_;
+      }
+      if (auto_handoff_enabled_ && !bios_handoff_done_ && post_value == 0x01 &&
+          cpu_.pc() < 0x00004000u) {
+        std::cout << "GBA BIOS auto handoff after POSTFLG\n";
+        handoff_to_rom();
       }
     }
     if (!bios_handoff_done_) {
@@ -1291,11 +1359,256 @@ void GbaCore::report_watchdog() {
 
 void GbaCore::fast_boot_to_rom() {
   bios_handoff_done_ = true;
+  cpu_.set_banked_sp(0x1F, 0x03007F00u);
+  cpu_.set_banked_sp(0x10, 0x03007F00u);
+  cpu_.set_banked_sp(0x13, 0x03007FE0u);
+  cpu_.set_banked_sp(0x12, 0x03007FA0u);
+  cpu_.set_banked_sp(0x11, 0x03007FA0u);
+  cpu_.set_banked_sp(0x17, 0x03007F00u);
+  cpu_.set_banked_sp(0x1B, 0x03007F00u);
   cpu_.set_thumb(false);
   cpu_.set_mode(0x1F);
   cpu_.set_irq_disable(false);
   cpu_.set_pc(0x08000000u);
   cpu_.clear_unimplemented_count();
+}
+
+void GbaCore::handoff_to_rom() {
+  cpu_.set_thumb(false);
+  cpu_.set_pc(0x08000000u);
+  cpu_.clear_unimplemented_count();
+}
+
+bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
+                             bool thumb_before,
+                             std::uint32_t op_before,
+                             int* cycles_out) {
+  if (!hle_swi_enabled_) {
+    return false;
+  }
+  std::uint32_t imm = 0;
+  if (thumb_before) {
+    if ((op_before & 0xFF00u) != 0xDF00u) {
+      return false;
+    }
+    imm = op_before & 0xFFu;
+  } else {
+    if ((op_before & 0x0F000000u) != 0x0F000000u) {
+      return false;
+    }
+    imm = op_before & 0x00FFFFFFu;
+  }
+
+  if (imm != 0x04 && imm != 0x05 && imm != 0x0B && imm != 0x0C) {
+    return false;
+  }
+
+  if (cycles_out) {
+    *cycles_out = thumb_before ? 3 : 4;
+  }
+  std::cout << "GBA HLE SWI " << (thumb_before ? "T" : "A") << " PC=0x" << std::hex
+            << std::setw(8) << std::setfill('0') << pc_before << " IMM=0x" << std::setw(2)
+            << imm << std::dec << "\n";
+
+  std::uint16_t mask = 0;
+  bool clear_if = false;
+  if (imm == 0x05) {
+    mask = 0x0001u;
+    clear_if = true;
+  } else if (imm == 0x04) {
+    clear_if = (cpu_.reg(0) != 0);
+    mask = static_cast<std::uint16_t>(cpu_.reg(1) & 0xFFFFu);
+  } else if (imm == 0x0B) {
+    std::uint32_t src = cpu_.reg(0);
+    std::uint32_t dst = cpu_.reg(1);
+    std::uint32_t ctrl = cpu_.reg(2);
+    std::uint32_t count = ctrl & 0x1FFFFFu;
+    if (count != 0) {
+      bool transfer32 = (ctrl & (1u << 24)) != 0;
+      bool fill = (ctrl & (1u << 26)) != 0;
+      if (transfer32) {
+        std::uint32_t value = fill ? bus_.read32(src) : 0;
+        for (std::uint32_t i = 0; i < count; ++i) {
+          if (!fill) {
+            value = bus_.read32(src + i * 4u);
+          }
+          bus_.write32(dst + i * 4u, value);
+        }
+      } else {
+        std::uint16_t value = fill ? bus_.read16(src) : 0;
+        for (std::uint32_t i = 0; i < count; ++i) {
+          if (!fill) {
+            value = bus_.read16(src + i * 2u);
+          }
+          bus_.write16(dst + i * 2u, value);
+        }
+      }
+    }
+  } else if (imm == 0x0C) {
+    std::uint32_t src = cpu_.reg(0);
+    std::uint32_t dst = cpu_.reg(1);
+    std::uint32_t ctrl = cpu_.reg(2);
+    std::uint32_t count = ctrl & 0x1FFFFFu;
+    if (count != 0) {
+      bool fill = (ctrl & (1u << 24)) != 0;
+      std::uint32_t total_words = count * 8u;
+      std::uint32_t value = fill ? bus_.read32(src) : 0;
+      for (std::uint32_t i = 0; i < total_words; ++i) {
+        if (!fill) {
+          value = bus_.read32(src + i * 4u);
+        }
+        bus_.write32(dst + i * 4u, value);
+      }
+    }
+  }
+
+  bus_.write_io16_raw(kRegIme, 1);
+  if (clear_if && mask != 0) {
+    std::uint16_t iflag = bus_.read_io16(kRegIf);
+    bus_.write_io16_raw(kRegIf, static_cast<std::uint16_t>(iflag & ~mask));
+  }
+  std::uint16_t ie = bus_.read_io16(kRegIe);
+  std::uint16_t iflag = bus_.read_io16(kRegIf);
+  if ((ie & iflag & mask) == 0) {
+    halted_ = true;
+  }
+  cpu_.set_pc(pc_before + (thumb_before ? 2u : 4u));
+  return true;
+}
+
+void GbaCore::auto_patch_tick(std::uint32_t pc_before,
+                              std::uint32_t pc_after,
+                              std::uint32_t op_before,
+                              bool thumb_before) {
+  if (!auto_patch_hang_ || auto_patch_threshold_ <= 0) {
+    return;
+  }
+  auto is_valid_ptr = [](std::uint32_t addr) -> bool {
+    if (addr >= 0x02000000u && addr <= 0x02FFFFFFu) {
+      return true;
+    }
+    if (addr >= 0x03000000u && addr <= 0x03FFFFFFu) {
+      return true;
+    }
+    if (addr >= 0x04000000u && addr <= 0x040003FFu) {
+      return true;
+    }
+    if (addr >= 0x05000000u && addr <= 0x050003FFu) {
+      return true;
+    }
+    if (addr >= 0x06000000u && addr <= 0x06017FFFu) {
+      return true;
+    }
+    if (addr >= 0x07000000u && addr <= 0x070003FFu) {
+      return true;
+    }
+    if (addr >= 0x08000000u && addr <= 0x0DFFFFFFu) {
+      return true;
+    }
+    if (addr >= 0x0E000000u && addr <= 0x0E00FFFFu) {
+      return true;
+    }
+    return false;
+  };
+
+  if (pc_before < 0x08000000u || pc_before > 0x0DFFFFFFu) {
+    loop_count_ = 0;
+    return;
+  }
+  if (auto_patch_start_ != 0 || auto_patch_end_ != 0) {
+    std::uint32_t start = auto_patch_start_;
+    std::uint32_t end = auto_patch_end_;
+    if (start > end) {
+      std::swap(start, end);
+    }
+    if (auto_patch_span_ > 0) {
+      std::uint32_t span = auto_patch_span_;
+      if (start > span) {
+        start -= span;
+      } else {
+        start = 0;
+      }
+      if (end > 0xFFFFFFFFu - span) {
+        end = 0xFFFFFFFFu;
+      } else {
+        end += span;
+      }
+    }
+    if (pc_before < start || pc_before > end) {
+      return;
+    }
+  }
+  if (pc_after > pc_before) {
+    return;
+  }
+  std::uint32_t span = pc_before - pc_after;
+  if (span > auto_patch_span_) {
+    return;
+  }
+  if (loop_pc_ == pc_before && loop_target_ == pc_after && loop_thumb_ == thumb_before) {
+    ++loop_count_;
+  } else {
+    loop_pc_ = pc_before;
+    loop_target_ = pc_after;
+    loop_thumb_ = thumb_before;
+    loop_count_ = 1;
+  }
+  int threshold = auto_patch_threshold_;
+  if (!is_valid_ptr(cpu_.reg(0))) {
+    threshold = std::min(threshold, 256);
+  }
+  if (loop_count_ < threshold) {
+    return;
+  }
+  loop_count_ = 0;
+  if (auto_patched_pcs_.find(pc_before) != auto_patched_pcs_.end()) {
+    return;
+  }
+
+  bool branch_matches = false;
+  if (thumb_before) {
+    std::uint16_t op = static_cast<std::uint16_t>(op_before & 0xFFFFu);
+    std::uint32_t target = 0;
+    if ((op & 0xF800u) == 0xE000u) {
+      std::int32_t imm11 = static_cast<std::int32_t>(op & 0x7FFu);
+      if (imm11 & 0x400) {
+        imm11 |= ~0x7FF;
+      }
+      target = pc_before + 4u + (static_cast<std::uint32_t>(imm11) << 1);
+      branch_matches = (target == pc_after);
+    } else if ((op & 0xF000u) == 0xD000u && (op & 0x0F00u) != 0x0F00u) {
+      std::int8_t imm8 = static_cast<std::int8_t>(op & 0xFFu);
+      target = pc_before + 4u + (static_cast<std::int32_t>(imm8) << 1);
+      branch_matches = (target == pc_after);
+    }
+  } else {
+    std::uint32_t op = op_before;
+    if ((op & 0x0E000000u) == 0x0A000000u) {
+      std::int32_t imm24 = static_cast<std::int32_t>(op & 0x00FFFFFFu);
+      if (imm24 & 0x00800000) {
+        imm24 |= ~0x00FFFFFF;
+      }
+      std::uint32_t target = pc_before + 8u + (static_cast<std::uint32_t>(imm24) << 2);
+      branch_matches = (target == pc_after);
+    }
+  }
+
+  if (!branch_matches) {
+    return;
+  }
+
+  bool patched = false;
+  if (thumb_before) {
+    patched = bus_.patch_rom16(pc_before, 0x46C0u);
+  } else {
+    patched = bus_.patch_rom32(pc_before, 0xE1A00000u);
+  }
+  if (patched) {
+    auto_patched_pcs_.insert(pc_before);
+    std::cout << "GBA AUTO PATCH: loop break at PC=0x" << std::hex
+              << std::setw(8) << std::setfill('0') << pc_before
+              << " -> NOP\n" << std::dec;
+  }
 }
 
 void GbaCore::step_dma() {

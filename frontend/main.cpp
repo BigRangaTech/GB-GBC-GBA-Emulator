@@ -1396,13 +1396,27 @@ struct Options {
   int gba_trace_steps = 2000;
   bool gba_trace_io = true;
   bool gba_trace_after_rom = false;
+  bool gba_fastboot = false;
+  bool gba_auto_handoff = true;
+  bool gba_hle_swi = false;
   int gba_unimp_limit = 0;
   int gba_watch_video_io = 0;
+  int gba_io_read_watch = 0;
   int gba_swi_limit = 0;
   int gba_watchdog_steps = 0;
   std::optional<std::uint32_t> gba_pc_watch_start;
   std::optional<std::uint32_t> gba_pc_watch_end;
   int gba_pc_watch_count = 0;
+  std::optional<std::uint32_t> gba_mem_watch_start;
+  std::optional<std::uint32_t> gba_mem_watch_end;
+  int gba_mem_watch_count = 0;
+  bool gba_mem_watch_reads = true;
+  bool gba_mem_watch_writes = true;
+  bool gba_auto_patch_hang = false;
+  int gba_auto_patch_threshold = 50000;
+  std::uint32_t gba_auto_patch_span = 0x40;
+  std::optional<std::uint32_t> gba_auto_patch_start;
+  std::optional<std::uint32_t> gba_auto_patch_end;
   bool headless = false;
   int headless_frames = 120;
   bool debug_window_overlay = false;
@@ -1433,11 +1447,22 @@ void print_usage(const char* exe) {
   std::cout << "  --gba-trace            Log GBA instructions + IO writes (short trace)\n";
   std::cout << "  --gba-trace-steps <n>  Instruction trace length (default: 2000)\n";
   std::cout << "  --gba-trace-after-rom  Start GBA trace after ROM entry\n";
+  std::cout << "  --gba-fastboot         Skip GBA BIOS and jump straight to ROM\n";
+  std::cout << "  --gba-no-auto-handoff  Disable auto handoff to ROM after POSTFLG\n";
+  std::cout << "  --gba-hle-swi          HLE SWI 0x04/0x05/0x0B/0x0C (IntrWait/VBlankIntrWait/CPUSet/CPUFastSet)\n";
   std::cout << "  --gba-unimp <n>        Log first N unimplemented GBA opcodes\n";
   std::cout << "  --gba-video-io <n>     Log first N video IO writes\n";
+  std::cout << "  --gba-io-read <n>      Log first N reads of key GBA IO regs\n";
   std::cout << "  --gba-swi <n>          Log first N GBA SWI calls\n";
   std::cout << "  --gba-watchdog <n>     Report hot PCs every N steps (0 disables)\n";
   std::cout << "  --gba-pc-watch <start> <end> <count>  Trace GBA PC range (hex or dec)\n";
+  std::cout << "  --gba-mem-watch <start> <end> <count>  Watch GBA memory range (hex or dec)\n";
+  std::cout << "  --gba-mem-watch-read   Watch reads only (use with --gba-mem-watch)\n";
+  std::cout << "  --gba-mem-watch-write  Watch writes only (use with --gba-mem-watch)\n";
+  std::cout << "  --gba-auto-patch-hang  Auto patch tight ROM loops (debug)\n";
+  std::cout << "  --gba-auto-patch-threshold <n>  Loop iterations before patch (default: 50000)\n";
+  std::cout << "  --gba-auto-patch-span <bytes>   Max backward branch span (default: 64)\n";
+  std::cout << "  --gba-auto-patch-range <start> <end>  Limit auto patch to ROM range\n";
   std::cout << "  --headless             Run without SDL window\n";
   std::cout << "  --frames <count>       Frames to run in headless mode (default: 120)\n";
   std::cout << "  --debug-window         Draw window border overlay\n";
@@ -1561,6 +1586,37 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
     }
   }
 
+  std::string gba_fastboot_value = config.get_string("gba_fastboot", "");
+  if (!gba_fastboot_value.empty()) {
+    auto parsed = parse_bool(gba_fastboot_value);
+    if (parsed.has_value()) {
+      options->gba_fastboot = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_fastboot value '" << gba_fastboot_value << "'\n";
+    }
+  }
+
+  std::string gba_auto_handoff_value = config.get_string("gba_auto_handoff", "");
+  if (!gba_auto_handoff_value.empty()) {
+    auto parsed = parse_bool(gba_auto_handoff_value);
+    if (parsed.has_value()) {
+      options->gba_auto_handoff = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_auto_handoff value '"
+                << gba_auto_handoff_value << "'\n";
+    }
+  }
+
+  std::string gba_hle_swi_value = config.get_string("gba_hle_swi", "");
+  if (!gba_hle_swi_value.empty()) {
+    auto parsed = parse_bool(gba_hle_swi_value);
+    if (parsed.has_value()) {
+      options->gba_hle_swi = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_hle_swi value '" << gba_hle_swi_value << "'\n";
+    }
+  }
+
   if (auto steps = config.get_int("gba_trace_steps")) {
     if (*steps >= 0) {
       options->gba_trace_steps = *steps;
@@ -1579,6 +1635,12 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
     }
   }
 
+  if (auto io_read_watch = config.get_int("gba_io_read")) {
+    if (*io_read_watch >= 0) {
+      options->gba_io_read_watch = *io_read_watch;
+    }
+  }
+
   if (auto swi_limit = config.get_int("gba_swi_limit")) {
     if (*swi_limit >= 0) {
       options->gba_swi_limit = *swi_limit;
@@ -1588,6 +1650,72 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
   if (auto watchdog_steps = config.get_int("gba_watchdog_steps")) {
     if (*watchdog_steps >= 0) {
       options->gba_watchdog_steps = *watchdog_steps;
+    }
+  }
+
+  if (auto mem_watch_start = config.get_int("gba_mem_watch_start")) {
+    if (*mem_watch_start >= 0) {
+      options->gba_mem_watch_start = static_cast<std::uint32_t>(*mem_watch_start);
+    }
+  }
+  if (auto mem_watch_end = config.get_int("gba_mem_watch_end")) {
+    if (*mem_watch_end >= 0) {
+      options->gba_mem_watch_end = static_cast<std::uint32_t>(*mem_watch_end);
+    }
+  }
+  if (auto mem_watch_count = config.get_int("gba_mem_watch_count")) {
+    if (*mem_watch_count >= 0) {
+      options->gba_mem_watch_count = *mem_watch_count;
+    }
+  }
+  std::string mem_watch_read_value = config.get_string("gba_mem_watch_read", "");
+  if (!mem_watch_read_value.empty()) {
+    auto parsed = parse_bool(mem_watch_read_value);
+    if (parsed.has_value()) {
+      options->gba_mem_watch_reads = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_mem_watch_read value '"
+                << mem_watch_read_value << "'\n";
+    }
+  }
+  std::string mem_watch_write_value = config.get_string("gba_mem_watch_write", "");
+  if (!mem_watch_write_value.empty()) {
+    auto parsed = parse_bool(mem_watch_write_value);
+    if (parsed.has_value()) {
+      options->gba_mem_watch_writes = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_mem_watch_write value '"
+                << mem_watch_write_value << "'\n";
+    }
+  }
+  std::string auto_patch_value = config.get_string("gba_auto_patch_hang", "");
+  if (!auto_patch_value.empty()) {
+    auto parsed = parse_bool(auto_patch_value);
+    if (parsed.has_value()) {
+      options->gba_auto_patch_hang = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_auto_patch_hang value '"
+                << auto_patch_value << "'\n";
+    }
+  }
+  if (auto auto_patch_threshold = config.get_int("gba_auto_patch_threshold")) {
+    if (*auto_patch_threshold >= 0) {
+      options->gba_auto_patch_threshold = *auto_patch_threshold;
+    }
+  }
+  if (auto auto_patch_span = config.get_int("gba_auto_patch_span")) {
+    if (*auto_patch_span >= 0) {
+      options->gba_auto_patch_span = static_cast<std::uint32_t>(*auto_patch_span);
+    }
+  }
+  if (auto auto_patch_start = config.get_int("gba_auto_patch_start")) {
+    if (*auto_patch_start >= 0) {
+      options->gba_auto_patch_start = static_cast<std::uint32_t>(*auto_patch_start);
+    }
+  }
+  if (auto auto_patch_end = config.get_int("gba_auto_patch_end")) {
+    if (*auto_patch_end >= 0) {
+      options->gba_auto_patch_end = static_cast<std::uint32_t>(*auto_patch_end);
     }
   }
 
@@ -2115,6 +2243,12 @@ int main(int argc, char** argv) {
       options.gba_trace = true;
     } else if (arg == "--gba-trace-after-rom") {
       options.gba_trace_after_rom = true;
+    } else if (arg == "--gba-fastboot") {
+      options.gba_fastboot = true;
+    } else if (arg == "--gba-no-auto-handoff") {
+      options.gba_auto_handoff = false;
+    } else if (arg == "--gba-hle-swi") {
+      options.gba_hle_swi = true;
     } else if (arg == "--gba-trace-steps") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --gba-trace-steps\n";
@@ -2133,6 +2267,12 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.gba_watch_video_io = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-io-read") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-io-read\n";
+        return 1;
+      }
+      options.gba_io_read_watch = std::max(0, std::stoi(argv[++i]));
     } else if (arg == "--gba-swi") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --gba-swi\n";
@@ -2158,6 +2298,55 @@ int main(int argc, char** argv) {
         options.gba_pc_watch_count = std::max(0, std::stoi(argv[++i]));
       } catch (...) {
         std::cout << "Invalid --gba-pc-watch values\n";
+        return 1;
+      }
+    } else if (arg == "--gba-mem-watch") {
+      if (i + 3 >= argc) {
+        std::cout << "Missing values for --gba-mem-watch\n";
+        return 1;
+      }
+      try {
+        options.gba_mem_watch_start = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_mem_watch_end = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_mem_watch_count = std::max(0, std::stoi(argv[++i]));
+      } catch (...) {
+        std::cout << "Invalid --gba-mem-watch values\n";
+        return 1;
+      }
+    } else if (arg == "--gba-mem-watch-read") {
+      options.gba_mem_watch_reads = true;
+      options.gba_mem_watch_writes = false;
+    } else if (arg == "--gba-mem-watch-write") {
+      options.gba_mem_watch_reads = false;
+      options.gba_mem_watch_writes = true;
+    } else if (arg == "--gba-auto-patch-hang") {
+      options.gba_auto_patch_hang = true;
+    } else if (arg == "--gba-auto-patch-threshold") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-auto-patch-threshold\n";
+        return 1;
+      }
+      options.gba_auto_patch_threshold = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-auto-patch-span") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-auto-patch-span\n";
+        return 1;
+      }
+      options.gba_auto_patch_span = static_cast<std::uint32_t>(std::stoul(argv[++i], nullptr, 0));
+    } else if (arg == "--gba-auto-patch-range") {
+      if (i + 2 >= argc) {
+        std::cout << "Missing values for --gba-auto-patch-range\n";
+        return 1;
+      }
+      try {
+        options.gba_auto_patch_start = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_auto_patch_end = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+      } catch (...) {
+        std::cout << "Invalid --gba-auto-patch-range values\n";
         return 1;
       }
     } else if (arg == "--gba-trace-no-io") {
@@ -2260,6 +2449,12 @@ int main(int argc, char** argv) {
       options.gba_trace = true;
     } else if (arg == "--gba-trace-after-rom") {
       options.gba_trace_after_rom = true;
+    } else if (arg == "--gba-fastboot") {
+      options.gba_fastboot = true;
+    } else if (arg == "--gba-no-auto-handoff") {
+      options.gba_auto_handoff = false;
+    } else if (arg == "--gba-hle-swi") {
+      options.gba_hle_swi = true;
     } else if (arg == "--gba-trace-steps") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --gba-trace-steps\n";
@@ -2278,6 +2473,12 @@ int main(int argc, char** argv) {
         return 1;
       }
       options.gba_watch_video_io = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-io-read") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-io-read\n";
+        return 1;
+      }
+      options.gba_io_read_watch = std::max(0, std::stoi(argv[++i]));
     } else if (arg == "--gba-swi") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --gba-swi\n";
@@ -2303,6 +2504,55 @@ int main(int argc, char** argv) {
         options.gba_pc_watch_count = std::max(0, std::stoi(argv[++i]));
       } catch (...) {
         std::cout << "Invalid --gba-pc-watch values\n";
+        return 1;
+      }
+    } else if (arg == "--gba-mem-watch") {
+      if (i + 3 >= argc) {
+        std::cout << "Missing values for --gba-mem-watch\n";
+        return 1;
+      }
+      try {
+        options.gba_mem_watch_start = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_mem_watch_end = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_mem_watch_count = std::max(0, std::stoi(argv[++i]));
+      } catch (...) {
+        std::cout << "Invalid --gba-mem-watch values\n";
+        return 1;
+      }
+    } else if (arg == "--gba-mem-watch-read") {
+      options.gba_mem_watch_reads = true;
+      options.gba_mem_watch_writes = false;
+    } else if (arg == "--gba-mem-watch-write") {
+      options.gba_mem_watch_reads = false;
+      options.gba_mem_watch_writes = true;
+    } else if (arg == "--gba-auto-patch-hang") {
+      options.gba_auto_patch_hang = true;
+    } else if (arg == "--gba-auto-patch-threshold") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-auto-patch-threshold\n";
+        return 1;
+      }
+      options.gba_auto_patch_threshold = std::max(0, std::stoi(argv[++i]));
+    } else if (arg == "--gba-auto-patch-span") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --gba-auto-patch-span\n";
+        return 1;
+      }
+      options.gba_auto_patch_span = static_cast<std::uint32_t>(std::stoul(argv[++i], nullptr, 0));
+    } else if (arg == "--gba-auto-patch-range") {
+      if (i + 2 >= argc) {
+        std::cout << "Missing values for --gba-auto-patch-range\n";
+        return 1;
+      }
+      try {
+        options.gba_auto_patch_start = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+        options.gba_auto_patch_end = static_cast<std::uint32_t>(
+            std::stoul(argv[++i], nullptr, 0));
+      } catch (...) {
+        std::cout << "Invalid --gba-auto-patch-range values\n";
         return 1;
       }
     } else if (arg == "--gba-trace-no-io") {
@@ -2660,6 +2910,9 @@ int main(int argc, char** argv) {
       std::cout << "GBA core: early implementation (not all games boot yet).\n";
     }
 
+    core.set_gba_auto_handoff(options.gba_auto_handoff);
+    core.set_gba_fastboot(options.gba_fastboot);
+    core.set_gba_hle_swi(options.gba_hle_swi);
     core.set_cpu_trace_enabled(options.cpu_trace);
     if (options.gba_trace_after_rom) {
       core.set_gba_trace_after_rom(options.gba_trace_steps, options.gba_trace_io);
@@ -2671,6 +2924,9 @@ int main(int argc, char** argv) {
     }
     if (options.gba_watch_video_io > 0) {
       core.set_gba_watch_video_io(options.gba_watch_video_io);
+    }
+    if (options.gba_io_read_watch > 0) {
+      core.set_gba_watch_io_reads(options.gba_io_read_watch);
     }
     if (options.gba_swi_limit > 0) {
       core.set_gba_log_swi(options.gba_swi_limit);
@@ -2684,6 +2940,25 @@ int main(int argc, char** argv) {
       core.set_gba_pc_watch(*options.gba_pc_watch_start,
                             *options.gba_pc_watch_end,
                             options.gba_pc_watch_count);
+    }
+    if (options.gba_mem_watch_count > 0 &&
+        options.gba_mem_watch_start.has_value() &&
+        options.gba_mem_watch_end.has_value()) {
+      core.set_gba_mem_watch(*options.gba_mem_watch_start,
+                             *options.gba_mem_watch_end,
+                             options.gba_mem_watch_count,
+                             options.gba_mem_watch_reads,
+                             options.gba_mem_watch_writes);
+    }
+    if (options.gba_auto_patch_hang) {
+      core.set_gba_auto_patch_hang(true);
+      core.set_gba_auto_patch_threshold(options.gba_auto_patch_threshold);
+      core.set_gba_auto_patch_span(options.gba_auto_patch_span);
+      if (options.gba_auto_patch_start.has_value() &&
+          options.gba_auto_patch_end.has_value()) {
+        core.set_gba_auto_patch_range(*options.gba_auto_patch_start,
+                                      *options.gba_auto_patch_end);
+      }
     }
     core.set_debug_window_overlay(debug_window_overlay);
     core.set_cgb_color_correction(cgb_color_correction);

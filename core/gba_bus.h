@@ -24,9 +24,15 @@ class GbaBus {
   void set_if_bits(std::uint16_t mask);
   void set_trace_io_limit(int limit);
   void set_watch_video_io_limit(int limit);
+  void set_watch_io_read_limit(int limit);
+  void clear_watchpoints();
+  void add_watchpoint(std::uint32_t start, std::uint32_t end, bool read, bool write);
+  void set_watchpoint_limit(int limit);
   void set_last_pc(std::uint32_t pc);
   bool take_postflg_write(std::uint32_t* pc, std::uint8_t* value);
   bool take_halt_request(bool* stop);
+  bool patch_rom16(std::uint32_t address, std::uint16_t value);
+  bool patch_rom32(std::uint32_t address, std::uint32_t value);
 
   const std::vector<std::uint8_t>& rom() const { return rom_; }
   const std::vector<std::uint8_t>& bios() const { return bios_; }
@@ -41,9 +47,23 @@ class GbaBus {
                  std::uint32_t address,
                  std::uint32_t base,
                  std::uint8_t value);
+  std::uint8_t read8_internal(std::uint32_t address, bool allow_log) const;
   void write8_internal(std::uint32_t address, std::uint8_t value, bool allow_trace);
   void log_io_write(std::uint32_t address, std::uint32_t value, int bits);
   void log_video_io_write(std::uint32_t address, std::uint32_t value, int bits);
+  void log_io_read(std::uint32_t address, std::uint32_t value, int bits) const;
+  void log_watchpoint(std::uint32_t address,
+                      std::uint32_t value,
+                      int bits,
+                      bool write) const;
+  bool rom_offset_for(std::uint32_t address, std::uint32_t* offset) const;
+
+  struct Watchpoint {
+    std::uint32_t start = 0;
+    std::uint32_t end = 0;
+    bool read = false;
+    bool write = false;
+  };
 
   std::vector<std::uint8_t> bios_;
   std::vector<std::uint8_t> ewram_;
@@ -61,6 +81,12 @@ class GbaBus {
   int trace_io_limit_ = 0;
   int watch_video_io_limit_ = 0;
   int watch_video_io_count_ = 0;
+  bool watch_io_read_enabled_ = false;
+  int watch_io_read_limit_ = 0;
+  mutable int watch_io_read_count_ = 0;
+  std::vector<Watchpoint> watchpoints_;
+  int watchpoint_limit_ = 0;
+  mutable int watchpoint_count_ = 0;
   std::uint32_t last_pc_ = 0;
   bool postflg_pending_ = false;
   std::uint32_t postflg_pc_ = 0;
