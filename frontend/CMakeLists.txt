@@ -1,8 +1,12 @@
 find_package(SDL2 REQUIRED)
 find_package(SDL2_image QUIET)
+find_package(Threads REQUIRED)
+find_package(Vulkan REQUIRED)
 
 add_executable(gbemu
   main.cpp
+  vk_frontend.cpp
+  vulkan_renderer.cpp
 )
 
 target_link_libraries(gbemu
@@ -10,6 +14,8 @@ target_link_libraries(gbemu
     gbemu_core
     gbemu_common
     SDL2::SDL2
+    Vulkan::Vulkan
+    Threads::Threads
 )
 
 if (SDL2_image_FOUND)
@@ -18,3 +24,20 @@ if (SDL2_image_FOUND)
 endif()
 
 target_compile_features(gbemu PRIVATE cxx_std_20)
+
+add_executable(gbemu_vk
+  vk_main.cpp
+  vk_frontend.cpp
+  vulkan_renderer.cpp
+)
+
+target_link_libraries(gbemu_vk
+  PRIVATE
+    gbemu_core
+    gbemu_common
+    SDL2::SDL2
+    Vulkan::Vulkan
+    Threads::Threads
+)
+
+target_compile_features(gbemu_vk PRIVATE cxx_std_20)

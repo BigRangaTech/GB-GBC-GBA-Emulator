@@ -10,6 +10,7 @@
 /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core/CMakeFiles/edit_cache.dir
 /home/jessie/Documents/GB-GBC-GBA-Emulator/build/core/CMakeFiles/rebuild_cache.dir
 /home/jessie/Documents/GB-GBC-GBA-Emulator/build/frontend/CMakeFiles/gbemu.dir
+/home/jessie/Documents/GB-GBC-GBA-Emulator/build/frontend/CMakeFiles/gbemu_vk.dir
 /home/jessie/Documents/GB-GBC-GBA-Emulator/build/frontend/CMakeFiles/test.dir
 /home/jessie/Documents/GB-GBC-GBA-Emulator/build/frontend/CMakeFiles/edit_cache.dir
 /home/jessie/Documents/GB-GBC-GBA-Emulator/build/frontend/CMakeFiles/rebuild_cache.dir

@@ -9,6 +9,8 @@ set(CMAKE_DEPENDS_LANGUAGES
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/main.cpp" "frontend/CMakeFiles/gbemu.dir/main.cpp.o" "gcc" "frontend/CMakeFiles/gbemu.dir/main.cpp.o.d"
+  "/home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vk_frontend.cpp" "frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o" "gcc" "frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o.d"
+  "/home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vulkan_renderer.cpp" "frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o" "gcc" "frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o.d"
   "" "frontend/gbemu" "gcc" "frontend/CMakeFiles/gbemu.dir/link.d"
   )
 

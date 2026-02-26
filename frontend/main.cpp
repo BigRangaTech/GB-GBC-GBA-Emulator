@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -8,12 +7,18 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <atomic>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <SDL2/SDL.h>
@@ -25,6 +30,7 @@
 #include "config.h"
 #include "input.h"
 #include "rom.h"
+#include "vk_frontend.h"
 
 namespace {
 
@@ -657,72 +663,16 @@ void draw_lcd(SDL_Renderer* renderer, const SDL_Rect& rect, Uint8 alpha) {
   }
 }
 
+class FilterWorkerPool;
+
 void apply_crt_filter(const std::uint32_t* src,
                       int src_stride_words,
                       std::uint32_t* dst,
                       std::uint32_t* prev,
                       int width,
                       int height,
-                      bool reset) {
-  if (!src || !dst || !prev || width <= 0 || height <= 0) {
-    return;
-  }
-  if (reset) {
-    for (int y = 0; y < height; ++y) {
-      int src_row = y * src_stride_words;
-      int dst_row = y * width;
-      for (int x = 0; x < width; ++x) {
-        std::uint32_t pixel = src[src_row + x];
-        dst[dst_row + x] = pixel;
-        prev[dst_row + x] = pixel;
-      }
-    }
-    return;
-  }
-
-  float cx = (width - 1) * 0.5f;
-  float cy = (height - 1) * 0.5f;
-  float inv_cx = (cx > 0.0f) ? (1.0f / cx) : 0.0f;
-  float inv_cy = (cy > 0.0f) ? (1.0f / cy) : 0.0f;
-  float blend = 0.25f;
-  float scanline = 0.86f;
-
-  for (int y = 0; y < height; ++y) {
-    float fy = (static_cast<float>(y) - cy) * inv_cy;
-    float fy2 = fy * fy;
-    float scan = (y & 1) ? scanline : 1.0f;
-    int src_row = y * src_stride_words;
-    int dst_row = y * width;
-    for (int x = 0; x < width; ++x) {
-      std::uint32_t src_pixel = src[src_row + x];
-      std::uint32_t prev_pixel = prev[dst_row + x];
-      int sr = (src_pixel >> 16) & 0xFF;
-      int sg = (src_pixel >> 8) & 0xFF;
-      int sb = src_pixel & 0xFF;
-      int pr = (prev_pixel >> 16) & 0xFF;
-      int pg = (prev_pixel >> 8) & 0xFF;
-      int pb = prev_pixel & 0xFF;
-      float rf = sr * (1.0f - blend) + pr * blend;
-      float gf = sg * (1.0f - blend) + pg * blend;
-      float bf = sb * (1.0f - blend) + pb * blend;
-      float fx = (static_cast<float>(x) - cx) * inv_cx;
-      float vignette = 1.0f - 0.18f * (fx * fx + fy2);
-      vignette = std::clamp(vignette, 0.72f, 1.0f);
-      float mul = scan * vignette;
-      int out_r = static_cast<int>(rf * mul);
-      int out_g = static_cast<int>(gf * mul);
-      int out_b = static_cast<int>(bf * mul);
-      out_r = std::clamp(out_r, 0, 255);
-      out_g = std::clamp(out_g, 0, 255);
-      out_b = std::clamp(out_b, 0, 255);
-      dst[dst_row + x] = 0xFF000000u |
-                         (static_cast<std::uint32_t>(out_r) << 16) |
-                         (static_cast<std::uint32_t>(out_g) << 8) |
-                         static_cast<std::uint32_t>(out_b);
-      prev[dst_row + x] = src_pixel;
-    }
-  }
-}
+                      bool reset,
+                      FilterWorkerPool* pool);
 
 struct CoverTexture {
   SDL_Texture* texture = nullptr;
@@ -1384,6 +1334,7 @@ struct Options {
   std::optional<UiTheme> ui_theme;
   std::optional<bool> hud;
   std::optional<VideoFilter> filter;
+  std::optional<int> filter_workers;
   std::optional<HudCorner> hud_corner;
   std::optional<bool> hud_compact;
   std::optional<int> hud_timeout;
@@ -1432,8 +1383,11 @@ void print_usage(const char* exe) {
   std::cout << "Usage: " << exe << " [options] <rom_file>\n";
   std::cout << "Options:\n";
   std::cout << "  --config <path>        Config file path (default: ./gbemu.conf if present)\n";
+  std::cout << "  --renderer <sdl|vulkan>  Select rendering frontend\n";
   std::cout << "  --system <gb|gbc|gba>  Override system detection\n";
   std::cout << "  --fps <value>          Override target frame rate (0 to disable pacing)\n";
+  std::cout << "  --filter <none|scanlines|lcd|crt>  Video filter\n";
+  std::cout << "  --filter-workers <n>   CRT/filter worker threads (0-16, default auto 4-8)\n";
   std::cout << "  --scale <int>          Override window scale factor\n";
   std::cout << "  --video-driver <name>  Force SDL video driver (wayland or x11)\n";
   std::cout << "  --ui-theme <name>      UI theme: retro | minimal | deck\n";
@@ -1829,6 +1783,12 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
     }
   }
 
+  if (auto workers = config.get_int("filter_workers")) {
+    if (*workers >= 0) {
+      options->filter_workers = *workers;
+    }
+  }
+
   std::string hud_corner_value = config.get_string("hud_corner", "");
   if (!hud_corner_value.empty()) {
     auto parsed = parse_hud_corner(hud_corner_value);
@@ -2088,6 +2048,207 @@ class FramePacer {
   std::uint64_t next_tick_ = 0;
 };
 
+class FilterWorkerPool {
+ public:
+  explicit FilterWorkerPool(unsigned workers) : workers_(workers) {
+    if (workers_ == 0) {
+      return;
+    }
+    ranges_.assign(workers_ + 1, std::pair<int, int>{0, 0});
+    threads_.reserve(workers_);
+    for (unsigned i = 0; i < workers_; ++i) {
+      threads_.emplace_back([this, i]() { worker_loop(i + 1); });
+    }
+  }
+
+  ~FilterWorkerPool() {
+    {
+      std::scoped_lock lock(mutex_);
+      stop_ = true;
+      ++epoch_;
+    }
+    cv_.notify_all();
+    for (auto& t : threads_) {
+      if (t.joinable()) {
+        t.join();
+      }
+    }
+  }
+
+  unsigned worker_count() const { return workers_; }
+
+  template <typename Fn>
+  void run(int rows, Fn&& fn) {
+    if (rows <= 0) {
+      return;
+    }
+    if (workers_ == 0 || rows < 8) {
+      fn(0, rows);
+      return;
+    }
+
+    int slots = static_cast<int>(workers_) + 1;
+    int chunk = (rows + slots - 1) / slots;
+    if (chunk <= 0) {
+      chunk = 1;
+    }
+    {
+      std::scoped_lock lock(mutex_);
+      for (int i = 0; i < slots; ++i) {
+        int start = i * chunk;
+        int end = std::min(rows, start + chunk);
+        ranges_[static_cast<std::size_t>(i)] = {start, end};
+      }
+      job_ = std::forward<Fn>(fn);
+      pending_ = workers_;
+      ++epoch_;
+    }
+    cv_.notify_all();
+
+    const auto main_range = ranges_[0];
+    if (main_range.first < main_range.second) {
+      fn(main_range.first, main_range.second);
+    }
+
+    std::unique_lock lock(mutex_);
+    done_cv_.wait(lock, [this]() { return pending_ == 0; });
+  }
+
+ private:
+  void worker_loop(unsigned index) {
+    std::size_t seen_epoch = 0;
+    while (true) {
+      std::function<void(int, int)> job;
+      std::pair<int, int> range{0, 0};
+      {
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this, &seen_epoch]() { return stop_ || epoch_ != seen_epoch; });
+        if (stop_) {
+          return;
+        }
+        seen_epoch = epoch_;
+        job = job_;
+        range = ranges_[index];
+      }
+
+      if (job && range.first < range.second) {
+        job(range.first, range.second);
+      }
+
+      {
+        std::scoped_lock lock(mutex_);
+        if (--pending_ == 0) {
+          done_cv_.notify_one();
+        }
+      }
+    }
+  }
+
+  unsigned workers_ = 0;
+  std::vector<std::thread> threads_;
+  std::vector<std::pair<int, int>> ranges_;
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::condition_variable done_cv_;
+  std::function<void(int, int)> job_;
+  std::size_t epoch_ = 0;
+  int pending_ = 0;
+  bool stop_ = false;
+};
+
+unsigned default_filter_workers() {
+  unsigned hw_threads = std::thread::hardware_concurrency();
+  if (hw_threads == 0) {
+    hw_threads = 8;
+  }
+  // Default to 4-8 worker threads to leave CPU for emulation + main/render thread.
+  unsigned workers = std::max(4u, hw_threads / 2);
+  return std::clamp(workers, 1u, 8u);
+}
+
+unsigned sanitize_filter_workers(int requested) {
+  return std::clamp(requested, 0, 16);
+}
+
+void apply_crt_filter(const std::uint32_t* src,
+                      int src_stride_words,
+                      std::uint32_t* dst,
+                      std::uint32_t* prev,
+                      int width,
+                      int height,
+                      bool reset,
+                      FilterWorkerPool* pool) {
+  if (!src || !dst || !prev || width <= 0 || height <= 0) {
+    return;
+  }
+  auto run_rows = [&](auto&& fn) {
+    if (pool && pool->worker_count() > 0) {
+      pool->run(height, fn);
+    } else {
+      fn(0, height);
+    }
+  };
+  if (reset) {
+    run_rows([&](int y_start, int y_end) {
+      for (int y = y_start; y < y_end; ++y) {
+        int src_row = y * src_stride_words;
+        int dst_row = y * width;
+        for (int x = 0; x < width; ++x) {
+          std::uint32_t pixel = src[src_row + x];
+          dst[dst_row + x] = pixel;
+          prev[dst_row + x] = pixel;
+        }
+      }
+    });
+    return;
+  }
+
+  float cx = (width - 1) * 0.5f;
+  float cy = (height - 1) * 0.5f;
+  float inv_cx = (cx > 0.0f) ? (1.0f / cx) : 0.0f;
+  float inv_cy = (cy > 0.0f) ? (1.0f / cy) : 0.0f;
+  float blend = 0.25f;
+  float scanline = 0.86f;
+
+  run_rows([&](int y_start, int y_end) {
+    for (int y = y_start; y < y_end; ++y) {
+      float fy = (static_cast<float>(y) - cy) * inv_cy;
+      float fy2 = fy * fy;
+      float scan = (y & 1) ? scanline : 1.0f;
+      int src_row = y * src_stride_words;
+      int dst_row = y * width;
+      for (int x = 0; x < width; ++x) {
+        std::uint32_t src_pixel = src[src_row + x];
+        std::uint32_t prev_pixel = prev[dst_row + x];
+        int sr = (src_pixel >> 16) & 0xFF;
+        int sg = (src_pixel >> 8) & 0xFF;
+        int sb = src_pixel & 0xFF;
+        int pr = (prev_pixel >> 16) & 0xFF;
+        int pg = (prev_pixel >> 8) & 0xFF;
+        int pb = prev_pixel & 0xFF;
+        float rf = sr * (1.0f - blend) + pr * blend;
+        float gf = sg * (1.0f - blend) + pg * blend;
+        float bf = sb * (1.0f - blend) + pb * blend;
+        float fx = (static_cast<float>(x) - cx) * inv_cx;
+        float vignette = 1.0f - 0.18f * (fx * fx + fy2);
+        vignette = std::clamp(vignette, 0.72f, 1.0f);
+        float mul = scan * vignette;
+        int out_r = static_cast<int>(rf * mul);
+        int out_g = static_cast<int>(gf * mul);
+        int out_b = static_cast<int>(bf * mul);
+        out_r = std::clamp(out_r, 0, 255);
+        out_g = std::clamp(out_g, 0, 255);
+        out_b = std::clamp(out_b, 0, 255);
+        dst[dst_row + x] = 0xFF000000u |
+                           (static_cast<std::uint32_t>(out_r) << 16) |
+                           (static_cast<std::uint32_t>(out_g) << 8) |
+                           static_cast<std::uint32_t>(out_b);
+        prev[dst_row + x] = src_pixel;
+      }
+    }
+  });
+}
+
 void print_gb_header(const std::vector<std::uint8_t>& data) {
   constexpr std::size_t kHeaderSize = 0x150;
   if (data.size() < kHeaderSize) {
@@ -2225,10 +2386,21 @@ int main(int argc, char** argv) {
   std::cout << "GBEmu skeleton v" << core.version() << "\n";
 
   Options options;
+  std::string renderer_backend = "sdl";
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--help" || arg == "-h") {
       options.show_help = true;
+    } else if (arg == "--renderer") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --renderer\n";
+        return 1;
+      }
+      renderer_backend = argv[++i];
+      if (renderer_backend != "sdl" && renderer_backend != "vulkan") {
+        std::cout << "Invalid renderer value: " << renderer_backend << "\n";
+        return 1;
+      }
     } else if (arg == "--config") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --config\n";
@@ -2439,6 +2611,16 @@ int main(int argc, char** argv) {
     std::string arg = argv[i];
     if (arg == "--help" || arg == "-h") {
       options.show_help = true;
+    } else if (arg == "--renderer") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --renderer\n";
+        return 1;
+      }
+      renderer_backend = argv[++i];
+      if (renderer_backend != "sdl" && renderer_backend != "vulkan") {
+        std::cout << "Invalid renderer value: " << renderer_backend << "\n";
+        return 1;
+      }
     } else if (arg == "--config") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --config\n";
@@ -2655,6 +2837,30 @@ int main(int argc, char** argv) {
         std::cout << "Invalid fps value: " << value << "\n";
         return 1;
       }
+    } else if (arg == "--filter") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --filter\n";
+        return 1;
+      }
+      std::string value = argv[++i];
+      auto parsed = parse_video_filter(value);
+      if (!parsed.has_value()) {
+        std::cout << "Invalid filter value: " << value << "\n";
+        return 1;
+      }
+      options.filter = parsed;
+    } else if (arg == "--filter-workers") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --filter-workers\n";
+        return 1;
+      }
+      std::string value = argv[++i];
+      try {
+        options.filter_workers = std::stoi(value);
+      } catch (...) {
+        std::cout << "Invalid filter-workers value: " << value << "\n";
+        return 1;
+      }
     } else if (arg == "--scale") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --scale\n";
@@ -2689,6 +2895,10 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  if (renderer_backend == "vulkan") {
+    return gbemu::frontend::run_vulkan_frontend(argc, argv);
+  }
+
   bool launcher_enabled = options.launcher;
   if (launcher_enabled && options.headless) {
     std::cout << "Launcher requires a window; disabling headless mode.\n";
@@ -2706,6 +2916,11 @@ int main(int argc, char** argv) {
 
   if (options.fps_override && *options.fps_override < 0.0) {
     std::cout << "FPS must be >= 0\n";
+    return 1;
+  }
+
+  if (options.filter_workers && (*options.filter_workers < 0 || *options.filter_workers > 16)) {
+    std::cout << "filter-workers must be in range 0..16\n";
     return 1;
   }
 
@@ -2875,22 +3090,39 @@ int main(int argc, char** argv) {
   bool cgb_color_correction = options.cgb_color_correction;
   bool gba_color_correction = options.gba_color_correction;
   std::string launcher_error;
+  std::mutex core_mutex;
+  bool emu_thread_started = false;
+  std::atomic<bool> emu_boot_enabled{false};
+  std::atomic<std::uint16_t> emu_boot_pc{0};
+  std::atomic<std::uint8_t> emu_boot_opcode{0};
 
   auto log_boot_state = [&](long long frame) {
     if (!options.boot_trace || !game_loaded) {
       return;
     }
-    bool now = core.boot_rom_enabled();
+    bool now = false;
+    std::uint16_t pc = 0;
+    std::uint8_t opcode = 0;
+    if (emu_thread_started) {
+      now = emu_boot_enabled.load(std::memory_order_relaxed);
+      pc = emu_boot_pc.load(std::memory_order_relaxed);
+      opcode = emu_boot_opcode.load(std::memory_order_relaxed);
+    } else {
+      std::scoped_lock lock(core_mutex);
+      now = core.boot_rom_enabled();
+      pc = core.cpu_pc();
+      opcode = core.cpu_opcode();
+    }
     if (boot_rom_last && !now) {
       std::cout << "Boot ROM disabled at frame " << frame
                 << " PC=0x" << std::hex << std::setw(4) << std::setfill('0')
-                << core.cpu_pc() << " opcode=0x" << std::setw(2)
-                << static_cast<int>(core.cpu_opcode()) << std::dec << "\n";
+                << pc << " opcode=0x" << std::setw(2)
+                << static_cast<int>(opcode) << std::dec << "\n";
     } else if (now && (frame % 120 == 0)) {
       std::cout << "Boot ROM still enabled at frame " << frame
                 << " PC=0x" << std::hex << std::setw(4) << std::setfill('0')
-                << core.cpu_pc() << " opcode=0x" << std::setw(2)
-                << static_cast<int>(core.cpu_opcode()) << std::dec << "\n";
+                << pc << " opcode=0x" << std::setw(2)
+                << static_cast<int>(opcode) << std::dec << "\n";
     }
     boot_rom_last = now;
   };
@@ -3159,7 +3391,8 @@ int main(int argc, char** argv) {
     return true;
   };
 
-  auto dump_cpu_fault = [&core]() {
+  auto dump_cpu_fault = [&]() {
+    std::scoped_lock lock(core_mutex);
     std::cout << "CPU fault at PC=0x" << std::hex << std::setw(4) << std::setfill('0')
               << core.cpu_pc() << " opcode=0x" << std::setw(2)
               << static_cast<int>(core.cpu_opcode()) << std::dec << "\n";
@@ -3182,6 +3415,7 @@ int main(int argc, char** argv) {
     if (!game_loaded) {
       return;
     }
+    std::scoped_lock lock(core_mutex);
     if (core.has_battery() && core.has_ram()) {
       std::vector<std::uint8_t> data = core.ram_data();
       std::string save_error;
@@ -3215,9 +3449,12 @@ int main(int argc, char** argv) {
       return;
     }
     std::vector<std::uint8_t> state;
-    if (!core.save_state(&state)) {
-      std::cout << "Failed to build save state\n";
-      return;
+    {
+      std::scoped_lock lock(core_mutex);
+      if (!core.save_state(&state)) {
+        std::cout << "Failed to build save state\n";
+        return;
+      }
     }
     std::string save_error;
     if (gbemu::common::write_file(state_path.string(), state, &save_error)) {
@@ -3238,9 +3475,12 @@ int main(int argc, char** argv) {
       return;
     }
     std::string err;
-    if (!core.load_state(state, &err)) {
-      std::cout << "Failed to load state: " << err << "\n";
-      return;
+    {
+      std::scoped_lock lock(core_mutex);
+      if (!core.load_state(state, &err)) {
+        std::cout << "Failed to load state: " << err << "\n";
+        return;
+      }
     }
     std::cout << "Loaded state from " << state_path.string() << "\n";
   };
@@ -3469,20 +3709,52 @@ int main(int argc, char** argv) {
 
   std::cout << "Window created. Press ESC or close the window to exit.\n";
 
-  double target_fps = options.fps_override.value_or(core.target_fps());
+  double target_fps = 60.0;
+  {
+    std::scoped_lock lock(core_mutex);
+    target_fps = options.fps_override.value_or(core.target_fps());
+  }
   FramePacer pacer(target_fps);
-  double audio_accum = 0.0;
   double fps_actual = 0.0;
-  int fps_frames = 0;
-  std::uint64_t fps_last = SDL_GetPerformanceCounter();
   const double fps_freq = static_cast<double>(SDL_GetPerformanceFrequency());
   const int sample_rate = (audio_device != 0) ? have.freq : 0;
   const std::size_t max_queue_bytes = static_cast<std::size_t>(sample_rate * 4 * 2);
+  unsigned filter_workers =
+      options.filter_workers.has_value() ? sanitize_filter_workers(*options.filter_workers)
+                                         : default_filter_workers();
+  FilterWorkerPool filter_pool(filter_workers);
+  std::cout << "Filter worker threads: " << filter_pool.worker_count() << "\n";
+  std::atomic<double> emu_target_fps{target_fps};
+  std::atomic<bool> emu_audio_enabled{audio_enabled};
+  std::atomic<bool> emu_active{false};
+  std::atomic<bool> emu_running{true};
+  std::atomic<bool> emu_faulted{false};
+  std::atomic<bool> emu_game_loaded{game_loaded};
+  std::atomic<std::uint8_t> emu_pending_joypad{joypad_state};
+  std::atomic<bool> emu_pending_joypad_irq{false};
+  std::atomic<double> emu_fps_actual{0.0};
+  std::mutex frame_mutex;
+  std::vector<std::uint32_t> emu_framebuffer(
+      static_cast<std::size_t>(fb_width) * fb_height, 0xFF000000u);
+  int emu_fb_width = fb_width;
+  int emu_fb_height = fb_height;
+  int emu_fb_stride_bytes = fb_width * 4;
+  std::atomic<std::uint64_t> emu_frame_serial{0};
+  std::vector<std::uint32_t> render_framebuffer = emu_framebuffer;
+  int render_fb_width = fb_width;
+  int render_fb_height = fb_height;
+  int render_fb_stride_bytes = fb_width * 4;
+  std::uint64_t render_frame_serial = 0;
 
   auto reset_timing = [&]() {
-    target_fps = options.fps_override.value_or(core.target_fps());
+    double default_fps_value = 60.0;
+    {
+      std::scoped_lock lock(core_mutex);
+      default_fps_value = core.target_fps();
+    }
+    target_fps = options.fps_override.value_or(default_fps_value);
     pacer = FramePacer(target_fps);
-    audio_accum = 0.0;
+    emu_target_fps.store(target_fps, std::memory_order_relaxed);
   };
 
   auto recalc_video = [&]() {
@@ -3491,8 +3763,14 @@ int main(int argc, char** argv) {
       desired_scale = 4;
     }
     scale = desired_scale;
-    fb_width = game_loaded ? core.framebuffer_width() : 240;
-    fb_height = game_loaded ? core.framebuffer_height() : 160;
+    if (game_loaded) {
+      std::scoped_lock lock(core_mutex);
+      fb_width = core.framebuffer_width();
+      fb_height = core.framebuffer_height();
+    } else {
+      fb_width = 240;
+      fb_height = 160;
+    }
     if (window) {
       SDL_SetWindowSize(window, fb_width * scale, fb_height * scale);
     }
@@ -3507,6 +3785,52 @@ int main(int argc, char** argv) {
                                   fb_height);
     }
     resize_filter_buffers();
+  };
+
+  auto snapshot_frame_from_core = [&]() {
+    if (!game_loaded) {
+      std::scoped_lock frame_lock(frame_mutex);
+      emu_fb_width = fb_width;
+      emu_fb_height = fb_height;
+      emu_fb_stride_bytes = fb_width * 4;
+      emu_framebuffer.assign(static_cast<std::size_t>(fb_width) * fb_height, 0xFF000000u);
+      emu_frame_serial.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+    int width = 0;
+    int height = 0;
+    int stride_bytes = 0;
+    std::vector<std::uint32_t> snapshot;
+    bool boot_enabled = false;
+    std::uint16_t boot_pc = 0;
+    std::uint8_t boot_opcode = 0;
+    {
+      std::scoped_lock core_lock(core_mutex);
+      width = core.framebuffer_width();
+      height = core.framebuffer_height();
+      stride_bytes = core.framebuffer_stride_bytes();
+      const std::uint32_t* src = core.framebuffer();
+      if (src && width > 0 && height > 0) {
+        snapshot.assign(src, src + static_cast<std::size_t>(width) * height);
+      }
+      boot_enabled = core.boot_rom_enabled();
+      boot_pc = core.cpu_pc();
+      boot_opcode = core.cpu_opcode();
+    }
+    if (snapshot.empty() && width > 0 && height > 0) {
+      snapshot.assign(static_cast<std::size_t>(width) * height, 0xFF000000u);
+    }
+    {
+      std::scoped_lock frame_lock(frame_mutex);
+      emu_fb_width = width;
+      emu_fb_height = height;
+      emu_fb_stride_bytes = stride_bytes;
+      emu_framebuffer = std::move(snapshot);
+    }
+    emu_boot_enabled.store(boot_enabled, std::memory_order_relaxed);
+    emu_boot_pc.store(boot_pc, std::memory_order_relaxed);
+    emu_boot_opcode.store(boot_opcode, std::memory_order_relaxed);
+    emu_frame_serial.fetch_add(1, std::memory_order_relaxed);
   };
 
   bool running = true;
@@ -3907,11 +4231,17 @@ int main(int argc, char** argv) {
         break;
       case 4:
         debug_window_overlay = !debug_window_overlay;
-        core.set_debug_window_overlay(debug_window_overlay);
+        {
+          std::scoped_lock lock(core_mutex);
+          core.set_debug_window_overlay(debug_window_overlay);
+        }
         break;
       case 5:
         cgb_color_correction = !cgb_color_correction;
-        core.set_cgb_color_correction(cgb_color_correction);
+        {
+          std::scoped_lock lock(core_mutex);
+          core.set_cgb_color_correction(cgb_color_correction);
+        }
         if (rom_override_active && game_loaded && !rom_override_path.empty()) {
           save_rom_override(rom_override_path.string(),
                             scale,
@@ -4039,7 +4369,10 @@ int main(int argc, char** argv) {
             options.scale_override = global_settings.scale_override;
             options.fps_override = global_settings.fps_override;
             cgb_color_correction = global_settings.cgb_color_correction;
-            core.set_cgb_color_correction(cgb_color_correction);
+            {
+              std::scoped_lock lock(core_mutex);
+              core.set_cgb_color_correction(cgb_color_correction);
+            }
             audio_enabled = global_settings.audio_enabled;
             if (audio_device != 0) {
               SDL_PauseAudioDevice(audio_device, audio_enabled ? 0 : 1);
@@ -4285,9 +4618,15 @@ int main(int argc, char** argv) {
     if (launcher_list.empty()) {
       return;
     }
+    emu_active.store(false, std::memory_order_relaxed);
     std::string err;
     int selected = launcher_list[launcher_index];
-    if (!load_game(roms[selected].path, &err)) {
+    bool loaded = false;
+    {
+      std::scoped_lock lock(core_mutex);
+      loaded = load_game(roms[selected].path, &err);
+    }
+    if (!loaded) {
       launcher_error = err;
       return;
     }
@@ -4297,6 +4636,12 @@ int main(int argc, char** argv) {
     if (audio_device != 0) {
       SDL_ClearQueuedAudio(audio_device);
     }
+    emu_audio_enabled.store(audio_enabled, std::memory_order_relaxed);
+    emu_game_loaded.store(game_loaded, std::memory_order_relaxed);
+    emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+    emu_pending_joypad_irq.store(false, std::memory_order_relaxed);
+    emu_faulted.store(false, std::memory_order_relaxed);
+    snapshot_frame_from_core();
     ui_mode = UiMode::Hidden;
   };
 
@@ -4345,9 +4690,124 @@ int main(int argc, char** argv) {
   };
 
   update_text_input();
+  snapshot_frame_from_core();
+  emu_faulted.store(false, std::memory_order_relaxed);
+  std::thread emu_thread([&]() {
+    double local_target_fps = emu_target_fps.load(std::memory_order_relaxed);
+    FramePacer emu_pacer(local_target_fps);
+    double audio_accum = 0.0;
+    int fps_frames_local = 0;
+    std::uint64_t fps_last_local = SDL_GetPerformanceCounter();
+    std::uint8_t applied_joypad = emu_pending_joypad.load(std::memory_order_relaxed);
+
+    while (emu_running.load(std::memory_order_relaxed)) {
+      if (!emu_active.load(std::memory_order_relaxed) ||
+          !emu_game_loaded.load(std::memory_order_relaxed)) {
+        SDL_Delay(1);
+        audio_accum = 0.0;
+        fps_frames_local = 0;
+        fps_last_local = SDL_GetPerformanceCounter();
+        continue;
+      }
+
+      double next_target_fps = emu_target_fps.load(std::memory_order_relaxed);
+      if (std::fabs(next_target_fps - local_target_fps) > 0.001) {
+        local_target_fps = next_target_fps;
+        emu_pacer = FramePacer(local_target_fps);
+        audio_accum = 0.0;
+      }
+
+      bool faulted = false;
+      bool boot_enabled = false;
+      std::uint16_t boot_pc = 0;
+      std::uint8_t boot_opcode = 0;
+      int width = 0;
+      int height = 0;
+      int stride_bytes = 0;
+      std::vector<std::uint32_t> snapshot;
+
+      {
+        std::scoped_lock core_lock(core_mutex);
+        std::uint8_t desired_joypad = emu_pending_joypad.load(std::memory_order_relaxed);
+        if (desired_joypad != applied_joypad) {
+          core.set_joypad_state(desired_joypad);
+          applied_joypad = desired_joypad;
+        }
+        if (emu_pending_joypad_irq.exchange(false, std::memory_order_relaxed)) {
+          core.request_interrupt(4);
+        }
+
+        core.step_frame();
+        faulted = core.cpu_faulted();
+        width = core.framebuffer_width();
+        height = core.framebuffer_height();
+        stride_bytes = core.framebuffer_stride_bytes();
+        const std::uint32_t* src = core.framebuffer();
+        if (src && width > 0 && height > 0) {
+          snapshot.assign(src, src + static_cast<std::size_t>(width) * height);
+        }
+        boot_enabled = core.boot_rom_enabled();
+        boot_pc = core.cpu_pc();
+        boot_opcode = core.cpu_opcode();
+
+        if (audio_device != 0 &&
+            sample_rate > 0 &&
+            emu_audio_enabled.load(std::memory_order_relaxed)) {
+          double audio_fps = local_target_fps > 0.0 ? local_target_fps : 60.0;
+          audio_accum += static_cast<double>(sample_rate) / audio_fps;
+          int samples = static_cast<int>(audio_accum);
+          if (samples > 0) {
+            audio_accum -= samples;
+            if (SDL_GetQueuedAudioSize(audio_device) < max_queue_bytes) {
+              std::vector<std::int16_t> audio;
+              core.generate_audio(sample_rate, samples, &audio);
+              if (!audio.empty()) {
+                SDL_QueueAudio(audio_device, audio.data(),
+                               static_cast<Uint32>(audio.size() * sizeof(std::int16_t)));
+              }
+            }
+          }
+        }
+      }
+
+      if (!snapshot.empty()) {
+        std::scoped_lock frame_lock(frame_mutex);
+        emu_fb_width = width;
+        emu_fb_height = height;
+        emu_fb_stride_bytes = stride_bytes;
+        emu_framebuffer = std::move(snapshot);
+        emu_frame_serial.fetch_add(1, std::memory_order_relaxed);
+      }
+
+      emu_boot_enabled.store(boot_enabled, std::memory_order_relaxed);
+      emu_boot_pc.store(boot_pc, std::memory_order_relaxed);
+      emu_boot_opcode.store(boot_opcode, std::memory_order_relaxed);
+      emu_faulted.store(faulted, std::memory_order_relaxed);
+
+      ++fps_frames_local;
+      std::uint64_t now = SDL_GetPerformanceCounter();
+      if (now - fps_last_local >= static_cast<std::uint64_t>(fps_freq)) {
+        double fps = (fps_frames_local * fps_freq) /
+                     static_cast<double>(now - fps_last_local);
+        emu_fps_actual.store(fps, std::memory_order_relaxed);
+        fps_frames_local = 0;
+        fps_last_local = now;
+      }
+
+      if (faulted) {
+        emu_active.store(false, std::memory_order_relaxed);
+      }
+      emu_pacer.sleep();
+    }
+  });
+  emu_thread_started = true;
 
   while (running) {
-    if (core.cpu_faulted()) {
+    if (emu_faulted.load(std::memory_order_relaxed)) {
+      emu_active.store(false, std::memory_order_relaxed);
+      {
+        std::scoped_lock lock(core_mutex);
+      }
       dump_cpu_fault();
       save_state();
       break;
@@ -4502,13 +4962,19 @@ int main(int argc, char** argv) {
         }
         if (key == SDLK_F1) {
           debug_window_overlay = !debug_window_overlay;
-          core.set_debug_window_overlay(debug_window_overlay);
+          {
+            std::scoped_lock lock(core_mutex);
+            core.set_debug_window_overlay(debug_window_overlay);
+          }
           std::cout << "Debug window overlay: " << (debug_window_overlay ? "ON" : "OFF") << "\n";
           continue;
         }
         if (key == SDLK_F2) {
           cgb_color_correction = !cgb_color_correction;
-          core.set_cgb_color_correction(cgb_color_correction);
+          {
+            std::scoped_lock lock(core_mutex);
+            core.set_cgb_color_correction(cgb_color_correction);
+          }
           std::cout << "CGB color correction: " << (cgb_color_correction ? "ON" : "OFF") << "\n";
           continue;
         }
@@ -4657,8 +5123,8 @@ int main(int argc, char** argv) {
             std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
             if (combined != joypad_state) {
               joypad_state = combined;
-              core.set_joypad_state(joypad_state);
-              core.request_interrupt(4);
+              emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+              emu_pending_joypad_irq.store(true, std::memory_order_relaxed);
             }
           }
         }
@@ -4671,8 +5137,8 @@ int main(int argc, char** argv) {
             std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
             if (combined != joypad_state) {
               joypad_state = combined;
-              core.set_joypad_state(joypad_state);
-              core.request_interrupt(4);
+              emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+              emu_pending_joypad_irq.store(true, std::memory_order_relaxed);
             }
           }
         }
@@ -4975,8 +5441,8 @@ int main(int argc, char** argv) {
             std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
             if (combined != joypad_state) {
               joypad_state = combined;
-              core.set_joypad_state(joypad_state);
-              core.request_interrupt(4);
+              emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+              emu_pending_joypad_irq.store(true, std::memory_order_relaxed);
             }
           }
         }
@@ -5001,8 +5467,8 @@ int main(int argc, char** argv) {
             std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
             if (combined != joypad_state) {
               joypad_state = combined;
-              core.set_joypad_state(joypad_state);
-              core.request_interrupt(4);
+              emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+              emu_pending_joypad_irq.store(true, std::memory_order_relaxed);
             }
           }
         }
@@ -5014,7 +5480,8 @@ int main(int argc, char** argv) {
         key_state = 0xFF;
         pad_state = 0xFF;
         joypad_state = 0xFF;
-        core.set_joypad_state(joypad_state);
+        emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+        emu_pending_joypad_irq.store(false, std::memory_order_relaxed);
         if (show_hud) {
           touch_hud();
         }
@@ -5024,6 +5491,10 @@ int main(int argc, char** argv) {
     float target_opacity = (ui_mode == UiMode::Hidden) ? 0.0f : 1.0f;
     ui_opacity += (target_opacity - ui_opacity) * 0.18f;
     ui_opacity = std::clamp(ui_opacity, 0.0f, 1.0f);
+    bool run_emulation = (ui_mode == UiMode::Hidden && game_loaded);
+    emu_active.store(run_emulation, std::memory_order_relaxed);
+    emu_game_loaded.store(game_loaded, std::memory_order_relaxed);
+
     if (ui_mode == UiMode::Hidden && game_loaded) {
       std::uint8_t polled_keys = poll_keyboard_state();
       std::uint8_t polled_pad = poll_controller_state();
@@ -5042,34 +5513,57 @@ int main(int argc, char** argv) {
       std::uint8_t combined = static_cast<std::uint8_t>(key_state & pad_state);
       if (combined != joypad_state) {
         joypad_state = combined;
-        core.set_joypad_state(joypad_state);
-        core.request_interrupt(4);
+        emu_pending_joypad.store(joypad_state, std::memory_order_relaxed);
+        emu_pending_joypad_irq.store(true, std::memory_order_relaxed);
       }
-      core.step_frame();
-      ++fps_frames;
-      std::uint64_t now = SDL_GetPerformanceCounter();
-      if (now - fps_last >= static_cast<std::uint64_t>(fps_freq)) {
-        fps_actual = (fps_frames * fps_freq) / (now - fps_last);
-        fps_frames = 0;
-        fps_last = now;
-      }
+      fps_actual = emu_fps_actual.load(std::memory_order_relaxed);
     }
     log_boot_state(frame_count);
     ++frame_count;
+
+    bool frame_updated = false;
+    if (game_loaded && texture) {
+      std::uint64_t latest_serial = emu_frame_serial.load(std::memory_order_relaxed);
+      if (latest_serial != render_frame_serial) {
+        std::scoped_lock frame_lock(frame_mutex);
+        latest_serial = emu_frame_serial.load(std::memory_order_relaxed);
+        if (latest_serial != render_frame_serial) {
+          render_fb_width = emu_fb_width;
+          render_fb_height = emu_fb_height;
+          render_fb_stride_bytes = emu_fb_stride_bytes;
+          render_framebuffer = emu_framebuffer;
+          render_frame_serial = latest_serial;
+          frame_updated = true;
+        }
+      }
+    }
+
+    if (ui_mode == UiMode::Hidden && target_fps <= 0.0 && !frame_updated) {
+      emu_audio_enabled.store(audio_enabled, std::memory_order_relaxed);
+      SDL_Delay(1);
+      continue;
+    }
 
     const UiThemeDef& theme = theme_def(ui_theme);
 
     SDL_RenderClear(renderer);
     if (game_loaded && texture) {
-      const std::uint32_t* frame_data = core.framebuffer();
-      if (video_filter == VideoFilter::Crt) {
-        int stride_words = core.framebuffer_stride_bytes() / 4;
-        apply_crt_filter(frame_data, stride_words, filtered_frame.data(),
-                         prev_frame.data(), fb_width, fb_height, crt_reset);
-        crt_reset = false;
-        SDL_UpdateTexture(texture, nullptr, filtered_frame.data(), fb_width * 4);
-      } else {
-        SDL_UpdateTexture(texture, nullptr, frame_data, core.framebuffer_stride_bytes());
+      const std::uint32_t* frame_data =
+          render_framebuffer.empty() ? nullptr : render_framebuffer.data();
+      bool dims_match = (render_fb_width == fb_width && render_fb_height == fb_height &&
+                         render_fb_stride_bytes == fb_width * 4);
+      if (frame_data != nullptr && dims_match) {
+        if (video_filter == VideoFilter::Crt) {
+          int stride_words = render_fb_stride_bytes / 4;
+          apply_crt_filter(frame_data, stride_words, filtered_frame.data(),
+                           prev_frame.data(), fb_width, fb_height, crt_reset, &filter_pool);
+          crt_reset = false;
+          SDL_UpdateTexture(texture, nullptr, filtered_frame.data(), fb_width * 4);
+        } else {
+          SDL_UpdateTexture(texture, nullptr, frame_data, render_fb_stride_bytes);
+        }
+      } else if (!dims_match) {
+        crt_reset = true;
       }
       SDL_RenderCopy(renderer, texture, nullptr, nullptr);
       SDL_Rect screen{0, 0, window_w, window_h};
@@ -5497,24 +5991,16 @@ int main(int argc, char** argv) {
       --theme_toast_frames;
     }
     SDL_RenderPresent(renderer);
-    if (audio_device != 0 && sample_rate > 0 && audio_enabled &&
-        ui_mode == UiMode::Hidden && game_loaded) {
-      audio_accum += static_cast<double>(sample_rate) / target_fps;
-      int samples = static_cast<int>(audio_accum);
-      if (samples > 0) {
-        audio_accum -= samples;
-        if (SDL_GetQueuedAudioSize(audio_device) < max_queue_bytes) {
-          std::vector<std::int16_t> audio;
-          core.generate_audio(sample_rate, samples, &audio);
-          if (!audio.empty()) {
-            SDL_QueueAudio(audio_device, audio.data(),
-                           static_cast<Uint32>(audio.size() * sizeof(std::int16_t)));
-          }
-        }
-      }
-    }
+    emu_audio_enabled.store(audio_enabled, std::memory_order_relaxed);
     pacer.sleep();
   }
+
+  emu_active.store(false, std::memory_order_relaxed);
+  emu_running.store(false, std::memory_order_relaxed);
+  if (emu_thread.joinable()) {
+    emu_thread.join();
+  }
+  emu_thread_started = false;
 
   save_ui_state(ui_state_path.string(), ui_theme, scale, target_fps,
                 input_config.axis_deadzone(), show_help, audio_enabled,

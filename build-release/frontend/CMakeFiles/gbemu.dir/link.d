@@ -3,9 +3,12 @@ gbemu: \
   /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/crti.o \
   /usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o \
   CMakeFiles/gbemu.dir/main.cpp.o \
+  CMakeFiles/gbemu.dir/vk_frontend.cpp.o \
+  CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o \
   ../core/libgbemu_core.a \
   ../common/libgbemu_common.a \
   /usr/lib/x86_64-linux-gnu/libSDL2.so \
+  /usr/lib/x86_64-linux-gnu/libvulkan.so \
   /usr/lib/gcc/x86_64-linux-gnu/15/libstdc++.so \
   /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so \
   /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so \
@@ -155,11 +158,17 @@ gbemu: \
 
 CMakeFiles/gbemu.dir/main.cpp.o:
 
+CMakeFiles/gbemu.dir/vk_frontend.cpp.o:
+
+CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o:
+
 ../core/libgbemu_core.a:
 
 ../common/libgbemu_common.a:
 
 /usr/lib/x86_64-linux-gnu/libSDL2.so:
+
+/usr/lib/x86_64-linux-gnu/libvulkan.so:
 
 /usr/lib/gcc/x86_64-linux-gnu/15/libstdc++.so:
 

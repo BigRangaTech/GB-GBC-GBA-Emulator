@@ -15,6 +15,12 @@ class GbaBus {
   std::uint8_t read8(std::uint32_t address) const;
   std::uint16_t read16(std::uint32_t address) const;
   std::uint32_t read32(std::uint32_t address) const;
+  std::uint8_t read_palette8_fast(std::uint32_t address) const;
+  std::uint16_t read_palette16_fast(std::uint32_t address) const;
+  std::uint8_t read_vram8_fast(std::uint32_t address) const;
+  std::uint16_t read_vram16_fast(std::uint32_t address) const;
+  std::uint8_t read_oam8_fast(std::uint32_t address) const;
+  std::uint16_t read_oam16_fast(std::uint32_t address) const;
 
   void write8(std::uint32_t address, std::uint8_t value);
   void write16(std::uint32_t address, std::uint16_t value);
@@ -48,7 +54,10 @@ class GbaBus {
                  std::uint32_t base,
                  std::uint8_t value);
   std::uint8_t read8_internal(std::uint32_t address, bool allow_log) const;
-  void write8_internal(std::uint32_t address, std::uint8_t value, bool allow_trace);
+  void write8_internal(std::uint32_t address,
+                       std::uint8_t value,
+                       bool allow_trace,
+                       bool byte_access);
   void log_io_write(std::uint32_t address, std::uint32_t value, int bits);
   void log_video_io_write(std::uint32_t address, std::uint32_t value, int bits);
   void log_io_read(std::uint32_t address, std::uint32_t value, int bits) const;

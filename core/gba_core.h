@@ -83,10 +83,21 @@ class GbaCore {
                            std::vector<bool>& obj_semi,
                            std::vector<bool>& obj_present,
                            std::vector<bool>& obj_window);
+  void ensure_render_buffers();
 
   GbaBus bus_;
   GbaCpu cpu_;
   std::vector<std::uint32_t> framebuffer_;
+  std::vector<std::uint32_t> line_color_buf_;
+  std::vector<int> line_prio_buf_;
+  std::vector<int> line_layer_buf_;
+  std::vector<std::uint32_t> obj_color_buf_;
+  std::vector<int> obj_prio_buf_;
+  std::vector<bool> obj_semi_buf_;
+  std::vector<bool> obj_present_buf_;
+  std::vector<bool> obj_window_buf_;
+  std::vector<std::uint8_t> win_mask_buf_;
+  std::vector<int> obj_index_buf_;
   std::uint64_t frame_counter_ = 0;
   int width_ = 240;
   int height_ = 160;

@@ -166,6 +166,19 @@ gbemu/fast:
 .PHONY : gbemu/fast
 
 #=============================================================================
+# Target rules for targets named gbemu_vk
+
+# Build rule for target.
+gbemu_vk: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 gbemu_vk
+.PHONY : gbemu_vk
+
+# fast build rule for target.
+gbemu_vk/fast:
+	$(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/build
+.PHONY : gbemu_vk/fast
+
+#=============================================================================
 # Target rules for targets named gbemu_tests
 
 # Build rule for target.
@@ -191,6 +204,7 @@ help:
 	@echo "... gbemu_common"
 	@echo "... gbemu_core"
 	@echo "... gbemu_tests"
+	@echo "... gbemu_vk"
 .PHONY : help
 
 

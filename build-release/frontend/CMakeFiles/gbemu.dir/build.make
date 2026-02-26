@@ -86,21 +86,54 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu.dir/main.cpp.s"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/main.cpp -o CMakeFiles/gbemu.dir/main.cpp.s
 
+frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o: frontend/CMakeFiles/gbemu.dir/flags.make
+frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vk_frontend.cpp
+frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o: frontend/CMakeFiles/gbemu.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o -MF CMakeFiles/gbemu.dir/vk_frontend.cpp.o.d -o CMakeFiles/gbemu.dir/vk_frontend.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vk_frontend.cpp
+
+frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/gbemu.dir/vk_frontend.cpp.i"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vk_frontend.cpp > CMakeFiles/gbemu.dir/vk_frontend.cpp.i
+
+frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu.dir/vk_frontend.cpp.s"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vk_frontend.cpp -o CMakeFiles/gbemu.dir/vk_frontend.cpp.s
+
+frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o: frontend/CMakeFiles/gbemu.dir/flags.make
+frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vulkan_renderer.cpp
+frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o: frontend/CMakeFiles/gbemu.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o -MF CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o.d -o CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o -c /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vulkan_renderer.cpp
+
+frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/gbemu.dir/vulkan_renderer.cpp.i"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vulkan_renderer.cpp > CMakeFiles/gbemu.dir/vulkan_renderer.cpp.i
+
+frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/gbemu.dir/vulkan_renderer.cpp.s"
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vulkan_renderer.cpp -o CMakeFiles/gbemu.dir/vulkan_renderer.cpp.s
+
 # Object files for target gbemu
 gbemu_OBJECTS = \
-"CMakeFiles/gbemu.dir/main.cpp.o"
+"CMakeFiles/gbemu.dir/main.cpp.o" \
+"CMakeFiles/gbemu.dir/vk_frontend.cpp.o" \
+"CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o"
 
 # External object files for target gbemu
 gbemu_EXTERNAL_OBJECTS =
 
 frontend/gbemu: frontend/CMakeFiles/gbemu.dir/main.cpp.o
+frontend/gbemu: frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o
+frontend/gbemu: frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o
 frontend/gbemu: frontend/CMakeFiles/gbemu.dir/build.make
 frontend/gbemu: frontend/CMakeFiles/gbemu.dir/compiler_depend.ts
 frontend/gbemu: core/libgbemu_core.a
 frontend/gbemu: common/libgbemu_common.a
 frontend/gbemu: /usr/lib/x86_64-linux-gnu/libSDL2.so
+frontend/gbemu: /usr/lib/x86_64-linux-gnu/libvulkan.so
 frontend/gbemu: frontend/CMakeFiles/gbemu.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable gbemu"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Linking CXX executable gbemu"
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release/frontend && $(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/gbemu.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

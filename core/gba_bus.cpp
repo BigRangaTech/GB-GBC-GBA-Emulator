@@ -20,8 +20,10 @@ constexpr std::uint32_t kIoBase = 0x04000000;
 constexpr std::uint32_t kIoSize = 0x00000400;
 constexpr std::uint32_t kPaletteBase = 0x05000000;
 constexpr std::uint32_t kPaletteSize = 0x00000400;
+constexpr std::uint32_t kPaletteMirrorSize = 0x00000400;
 constexpr std::uint32_t kVramBase = 0x06000000;
 constexpr std::uint32_t kVramSize = 0x00018000;
+constexpr std::uint32_t kVramMirrorSize = 0x00020000;
 constexpr std::uint32_t kOamBase = 0x07000000;
 constexpr std::uint32_t kOamSize = 0x00000400;
 constexpr std::uint32_t kRomBase = 0x08000000;
@@ -37,6 +39,27 @@ constexpr std::uint32_t kRegIe = 0x04000200;
 constexpr std::uint32_t kRegIme = 0x04000208;
 constexpr std::uint32_t kRegPostflg = 0x04000300;
 constexpr std::uint32_t kRegHaltcnt = 0x04000301;
+
+bool palette_offset_for(std::uint32_t address, std::uint32_t* offset) {
+  if (!offset || address < kPaletteBase || address >= kPaletteBase + kPaletteMirrorSize) {
+    return false;
+  }
+  *offset = (address - kPaletteBase) & (kPaletteSize - 1u);
+  return true;
+}
+
+bool vram_offset_for(std::uint32_t address, std::uint32_t* offset) {
+  if (!offset || address < kVramBase || address >= kVramBase + kVramMirrorSize) {
+    return false;
+  }
+  std::uint32_t off = address - kVramBase;
+  if (off >= kVramSize) {
+    // 0x06018000-0x0601FFFF mirrors 0x06010000-0x06017FFF.
+    off = 0x00010000u + (off & 0x00007FFFu);
+  }
+  *offset = off;
+  return true;
+}
 
 } // namespace
 
@@ -308,7 +331,10 @@ void GbaBus::log_watchpoint(std::uint32_t address,
   }
 }
 
-void GbaBus::write8_internal(std::uint32_t address, std::uint8_t value, bool allow_trace) {
+void GbaBus::write8_internal(std::uint32_t address,
+                             std::uint8_t value,
+                             bool allow_trace,
+                             bool byte_access) {
   if (allow_trace) {
     log_io_write(address, value, 8);
   }
@@ -343,16 +369,49 @@ void GbaBus::write8_internal(std::uint32_t address, std::uint8_t value, bool all
     write_mem(io_, address, kIoBase, value);
     return;
   }
-  if (address >= kPaletteBase && address < kPaletteBase + kPaletteSize) {
-    write_mem(palette_, address, kPaletteBase, value);
+  if (address >= kPaletteBase && address < kPaletteBase + kPaletteMirrorSize) {
+    std::uint32_t offset = 0;
+    if (!palette_offset_for(address, &offset)) {
+      return;
+    }
+    if (byte_access) {
+      // Palette RAM is 16-bit bus only on GBA; byte writes mirror to the full halfword.
+      std::uint32_t aligned = offset & ~1u;
+      if (aligned + 1 < palette_.size()) {
+        palette_[aligned] = value;
+        palette_[aligned + 1] = value;
+      }
+    } else {
+      if (offset < palette_.size()) {
+        palette_[offset] = value;
+      }
+    }
     return;
   }
-  if (address >= kVramBase && address < kVramBase + kVramSize) {
-    write_mem(vram_, address, kVramBase, value);
+  if (address >= kVramBase && address < kVramBase + kVramMirrorSize) {
+    std::uint32_t offset = 0;
+    if (!vram_offset_for(address, &offset)) {
+      return;
+    }
+    if (byte_access) {
+      // VRAM is also effectively halfword-addressable for byte writes.
+      std::uint32_t aligned = offset & ~1u;
+      if (aligned + 1 < vram_.size()) {
+        vram_[aligned] = value;
+        vram_[aligned + 1] = value;
+      }
+    } else {
+      if (offset < vram_.size()) {
+        vram_[offset] = value;
+      }
+    }
     return;
   }
   if (address >= kOamBase && address < kOamBase + kOamSize) {
-    write_mem(oam_, address, kOamBase, value);
+    if (!byte_access) {
+      write_mem(oam_, address, kOamBase, value);
+    }
+    // Byte writes to OAM are ignored on real hardware.
     return;
   }
   if (address >= kSramBase && address < kSramBase + kSramSize) {
@@ -373,10 +432,16 @@ std::uint8_t GbaBus::read8_internal(std::uint32_t address, bool allow_log) const
     value = iwram_[offset];
   } else if (address >= kIoBase && address < kIoBase + kIoSize) {
     value = read_mem(io_, address, kIoBase);
-  } else if (address >= kPaletteBase && address < kPaletteBase + kPaletteSize) {
-    value = read_mem(palette_, address, kPaletteBase);
-  } else if (address >= kVramBase && address < kVramBase + kVramSize) {
-    value = read_mem(vram_, address, kVramBase);
+  } else if (address >= kPaletteBase && address < kPaletteBase + kPaletteMirrorSize) {
+    std::uint32_t offset = 0;
+    if (palette_offset_for(address, &offset) && offset < palette_.size()) {
+      value = palette_[offset];
+    }
+  } else if (address >= kVramBase && address < kVramBase + kVramMirrorSize) {
+    std::uint32_t offset = 0;
+    if (vram_offset_for(address, &offset) && offset < vram_.size()) {
+      value = vram_[offset];
+    }
   } else if (address >= kOamBase && address < kOamBase + kOamSize) {
     value = read_mem(oam_, address, kOamBase);
   } else if (address >= kSramBase && address < kSramBase + kSramSize) {
@@ -444,10 +509,82 @@ std::uint32_t GbaBus::read32(std::uint32_t address) const {
   return value;
 }
 
+std::uint8_t GbaBus::read_palette8_fast(std::uint32_t address) const {
+  std::uint32_t offset = 0;
+  if (!palette_offset_for(address, &offset)) {
+    return 0xFF;
+  }
+  if (offset >= palette_.size()) {
+    return 0xFF;
+  }
+  return palette_[offset];
+}
+
+std::uint16_t GbaBus::read_palette16_fast(std::uint32_t address) const {
+  std::uint32_t aligned = address & ~1u;
+  std::uint32_t offset = 0;
+  if (!palette_offset_for(aligned, &offset)) {
+    return 0xFFFF;
+  }
+  if (offset + 1 >= palette_.size()) {
+    return 0xFFFF;
+  }
+  return static_cast<std::uint16_t>(palette_[offset] |
+                                    (static_cast<std::uint16_t>(palette_[offset + 1]) << 8));
+}
+
+std::uint8_t GbaBus::read_vram8_fast(std::uint32_t address) const {
+  std::uint32_t offset = 0;
+  if (!vram_offset_for(address, &offset)) {
+    return 0xFF;
+  }
+  if (offset >= vram_.size()) {
+    return 0xFF;
+  }
+  return vram_[offset];
+}
+
+std::uint16_t GbaBus::read_vram16_fast(std::uint32_t address) const {
+  std::uint32_t aligned = address & ~1u;
+  std::uint32_t offset = 0;
+  if (!vram_offset_for(aligned, &offset)) {
+    return 0xFFFF;
+  }
+  if (offset + 1 >= vram_.size()) {
+    return 0xFFFF;
+  }
+  return static_cast<std::uint16_t>(vram_[offset] |
+                                    (static_cast<std::uint16_t>(vram_[offset + 1]) << 8));
+}
+
+std::uint8_t GbaBus::read_oam8_fast(std::uint32_t address) const {
+  if (address < kOamBase) {
+    return 0xFF;
+  }
+  std::uint32_t offset = address - kOamBase;
+  if (offset >= kOamSize) {
+    return 0xFF;
+  }
+  return oam_[offset];
+}
+
+std::uint16_t GbaBus::read_oam16_fast(std::uint32_t address) const {
+  std::uint32_t aligned = address & ~1u;
+  if (aligned < kOamBase) {
+    return 0xFFFF;
+  }
+  std::uint32_t offset = aligned - kOamBase;
+  if (offset + 1 >= kOamSize) {
+    return 0xFFFF;
+  }
+  return static_cast<std::uint16_t>(oam_[offset] |
+                                    (static_cast<std::uint16_t>(oam_[offset + 1]) << 8));
+}
+
 void GbaBus::write8(std::uint32_t address, std::uint8_t value) {
   log_video_io_write(address, value, 8);
   log_watchpoint(address, value, 8, true);
-  write8_internal(address, value, true);
+  write8_internal(address, value, true, true);
 }
 
 void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
@@ -461,8 +598,8 @@ void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
     write_io16_raw(kIfAddr, next);
     return;
   }
-  write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false);
-  write8_internal(aligned + 1, static_cast<std::uint8_t>(value >> 8), false);
+  write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false, false);
+  write8_internal(aligned + 1, static_cast<std::uint8_t>(value >> 8), false, false);
 }
 
 void GbaBus::write32(std::uint32_t address, std::uint32_t value) {
@@ -470,10 +607,10 @@ void GbaBus::write32(std::uint32_t address, std::uint32_t value) {
   log_video_io_write(address, value, 32);
   log_watchpoint(address, value, 32, true);
   std::uint32_t aligned = address & ~3u;
-  write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false);
-  write8_internal(aligned + 1, static_cast<std::uint8_t>((value >> 8) & 0xFF), false);
-  write8_internal(aligned + 2, static_cast<std::uint8_t>((value >> 16) & 0xFF), false);
-  write8_internal(aligned + 3, static_cast<std::uint8_t>((value >> 24) & 0xFF), false);
+  write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false, false);
+  write8_internal(aligned + 1, static_cast<std::uint8_t>((value >> 8) & 0xFF), false, false);
+  write8_internal(aligned + 2, static_cast<std::uint8_t>((value >> 16) & 0xFF), false, false);
+  write8_internal(aligned + 3, static_cast<std::uint8_t>((value >> 24) & 0xFF), false, false);
 }
 
 std::uint16_t GbaBus::read_io16(std::uint32_t address) const {

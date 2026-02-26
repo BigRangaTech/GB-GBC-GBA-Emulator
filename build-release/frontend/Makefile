@@ -140,6 +140,20 @@ gbemu/fast:
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/build
 .PHONY : gbemu/fast
 
+# Convenience name for target.
+frontend/CMakeFiles/gbemu_vk.dir/rule:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 frontend/CMakeFiles/gbemu_vk.dir/rule
+.PHONY : frontend/CMakeFiles/gbemu_vk.dir/rule
+
+# Convenience name for target.
+gbemu_vk: frontend/CMakeFiles/gbemu_vk.dir/rule
+.PHONY : gbemu_vk
+
+# fast build rule for target.
+gbemu_vk/fast:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/build
+.PHONY : gbemu_vk/fast
+
 main.o: main.cpp.o
 .PHONY : main.o
 
@@ -164,6 +178,84 @@ main.cpp.s:
 	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/main.cpp.s
 .PHONY : main.cpp.s
 
+vk_frontend.o: vk_frontend.cpp.o
+.PHONY : vk_frontend.o
+
+# target to build an object file
+vk_frontend.cpp.o:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vk_frontend.cpp.o
+.PHONY : vk_frontend.cpp.o
+
+vk_frontend.i: vk_frontend.cpp.i
+.PHONY : vk_frontend.i
+
+# target to preprocess a source file
+vk_frontend.cpp.i:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.i
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vk_frontend.cpp.i
+.PHONY : vk_frontend.cpp.i
+
+vk_frontend.s: vk_frontend.cpp.s
+.PHONY : vk_frontend.s
+
+# target to generate assembly for a file
+vk_frontend.cpp.s:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.s
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vk_frontend.cpp.s
+.PHONY : vk_frontend.cpp.s
+
+vk_main.o: vk_main.cpp.o
+.PHONY : vk_main.o
+
+# target to build an object file
+vk_main.cpp.o:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vk_main.cpp.o
+.PHONY : vk_main.cpp.o
+
+vk_main.i: vk_main.cpp.i
+.PHONY : vk_main.i
+
+# target to preprocess a source file
+vk_main.cpp.i:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vk_main.cpp.i
+.PHONY : vk_main.cpp.i
+
+vk_main.s: vk_main.cpp.s
+.PHONY : vk_main.s
+
+# target to generate assembly for a file
+vk_main.cpp.s:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vk_main.cpp.s
+.PHONY : vk_main.cpp.s
+
+vulkan_renderer.o: vulkan_renderer.cpp.o
+.PHONY : vulkan_renderer.o
+
+# target to build an object file
+vulkan_renderer.cpp.o:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.o
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vulkan_renderer.cpp.o
+.PHONY : vulkan_renderer.cpp.o
+
+vulkan_renderer.i: vulkan_renderer.cpp.i
+.PHONY : vulkan_renderer.i
+
+# target to preprocess a source file
+vulkan_renderer.cpp.i:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.i
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vulkan_renderer.cpp.i
+.PHONY : vulkan_renderer.cpp.i
+
+vulkan_renderer.s: vulkan_renderer.cpp.s
+.PHONY : vulkan_renderer.s
+
+# target to generate assembly for a file
+vulkan_renderer.cpp.s:
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu.dir/build.make frontend/CMakeFiles/gbemu.dir/vulkan_renderer.cpp.s
+	cd /home/jessie/Documents/GB-GBC-GBA-Emulator/build-release && $(MAKE) $(MAKESILENT) -f frontend/CMakeFiles/gbemu_vk.dir/build.make frontend/CMakeFiles/gbemu_vk.dir/vulkan_renderer.cpp.s
+.PHONY : vulkan_renderer.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -174,9 +266,19 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... test"
 	@echo "... gbemu"
+	@echo "... gbemu_vk"
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"
+	@echo "... vk_frontend.o"
+	@echo "... vk_frontend.i"
+	@echo "... vk_frontend.s"
+	@echo "... vk_main.o"
+	@echo "... vk_main.i"
+	@echo "... vk_main.s"
+	@echo "... vulkan_renderer.o"
+	@echo "... vulkan_renderer.i"
+	@echo "... vulkan_renderer.s"
 .PHONY : help
 
 

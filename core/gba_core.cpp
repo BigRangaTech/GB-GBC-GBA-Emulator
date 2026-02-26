@@ -146,6 +146,7 @@ void GbaCore::set_pc_watch(std::uint32_t start, std::uint32_t end, int count) {
 void GbaCore::reset() {
   cpu_.reset();
   framebuffer_.assign(static_cast<std::size_t>(width_) * height_, 0xFF000000u);
+  ensure_render_buffers();
   frame_counter_ = 0;
   bios_handoff_done_ = false;
   bios_watchdog_cycles_ = 0;
@@ -217,6 +218,20 @@ void GbaCore::reset() {
   if (fastboot_enabled_) {
     fast_boot_to_rom();
   }
+}
+
+void GbaCore::ensure_render_buffers() {
+  std::size_t pixels = static_cast<std::size_t>(width_);
+  line_color_buf_.resize(pixels);
+  line_prio_buf_.resize(pixels);
+  line_layer_buf_.resize(pixels);
+  obj_color_buf_.resize(pixels);
+  obj_prio_buf_.resize(pixels);
+  obj_semi_buf_.resize(pixels);
+  obj_present_buf_.resize(pixels);
+  obj_window_buf_.resize(pixels);
+  win_mask_buf_.resize(pixels);
+  obj_index_buf_.resize(pixels);
 }
 
 void GbaCore::set_keyinput(std::uint16_t value) {
@@ -345,7 +360,13 @@ void GbaCore::step_frame() {
   while (cycles < kGbaCyclesPerFrame && !cpu_.faulted()) {
     sync_timers_from_io();
     if (halted_) {
+      // Fast-forward while halted to avoid spending most host CPU time
+      // in 4-cycle idle slices during BIOS/IRQ waits.
+      int remaining = kGbaCyclesPerFrame - cycles;
       int used = 4;
+      if (remaining > 4 && !interrupt_pending()) {
+        used = std::min(remaining, 1024);
+      }
       step_timers(used);
       step_dma();
       step_ppu(used);
@@ -462,6 +483,7 @@ void GbaCore::render_line(int y) {
   if (y < 0 || y >= height_) {
     return;
   }
+  ensure_render_buffers();
   constexpr int kLayerBg0 = 0;
   constexpr int kLayerBg1 = 1;
   constexpr int kLayerBg2 = 2;
@@ -475,23 +497,22 @@ void GbaCore::render_line(int y) {
   int mosaic_bg_h = ((mos >> 4) & 0xF) + 1;
   int mosaic_obj_w = ((mos >> 8) & 0xF) + 1;
   int mosaic_obj_h = ((mos >> 12) & 0xF) + 1;
-  std::vector<std::uint32_t> line_color(static_cast<std::size_t>(width_));
-  std::vector<int> line_prio(static_cast<std::size_t>(width_), 4);
-  std::vector<int> line_layer(static_cast<std::size_t>(width_), kLayerBd);
-  std::vector<std::uint32_t> obj_color(static_cast<std::size_t>(width_), 0);
-  std::vector<int> obj_prio(static_cast<std::size_t>(width_), 4);
-  std::vector<bool> obj_semi(static_cast<std::size_t>(width_), false);
-  std::vector<bool> obj_present(static_cast<std::size_t>(width_), false);
-  std::vector<bool> obj_window(static_cast<std::size_t>(width_), false);
+  std::fill(line_prio_buf_.begin(), line_prio_buf_.end(), 4);
+  std::fill(line_layer_buf_.begin(), line_layer_buf_.end(), kLayerBd);
+  std::fill(obj_color_buf_.begin(), obj_color_buf_.end(), 0u);
+  std::fill(obj_prio_buf_.begin(), obj_prio_buf_.end(), 4);
+  std::fill(obj_semi_buf_.begin(), obj_semi_buf_.end(), false);
+  std::fill(obj_present_buf_.begin(), obj_present_buf_.end(), false);
+  std::fill(obj_window_buf_.begin(), obj_window_buf_.end(), false);
 
-  std::uint16_t backdrop = bus_.read16(0x05000000u);
+  std::uint16_t backdrop = bus_.read_palette16_fast(0x05000000u);
   std::uint32_t backdrop_color = bgr555_to_argb(backdrop);
 
   bool gba_color_correct = gba_color_correct_;
   if (dispcnt & 0x0080) {
-    std::fill(line_color.begin(), line_color.end(), 0xFF000000u);
-    std::fill(line_prio.begin(), line_prio.end(), 4);
-    std::fill(line_layer.begin(), line_layer.end(), kLayerBd);
+    std::fill(line_color_buf_.begin(), line_color_buf_.end(), 0xFF000000u);
+    std::fill(line_prio_buf_.begin(), line_prio_buf_.end(), 4);
+    std::fill(line_layer_buf_.begin(), line_layer_buf_.end(), kLayerBd);
   } else {
     std::uint16_t mode = dispcnt & 0x0007;
     int mosaiced_y = y;
@@ -500,33 +521,33 @@ void GbaCore::render_line(int y) {
     }
     switch (mode) {
       case 0:
-        render_line_mode0(mosaiced_y, line_color, line_prio, line_layer, 0xF);
+        render_line_mode0(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_, 0xF);
         break;
       case 1:
-        render_line_mode0(mosaiced_y, line_color, line_prio, line_layer, 0x3);
-        render_line_affine_bg(mosaiced_y, 2, line_color, line_prio, line_layer);
+        render_line_mode0(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_, 0x3);
+        render_line_affine_bg(mosaiced_y, 2, line_color_buf_, line_prio_buf_, line_layer_buf_);
         break;
       case 2:
-        render_line_mode0(mosaiced_y, line_color, line_prio, line_layer, 0x0);
-        render_line_affine_bg(mosaiced_y, 2, line_color, line_prio, line_layer);
-        render_line_affine_bg(mosaiced_y, 3, line_color, line_prio, line_layer);
+        render_line_mode0(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_, 0x0);
+        render_line_affine_bg(mosaiced_y, 2, line_color_buf_, line_prio_buf_, line_layer_buf_);
+        render_line_affine_bg(mosaiced_y, 3, line_color_buf_, line_prio_buf_, line_layer_buf_);
         break;
       case 3:
-        render_line_mode3(mosaiced_y, line_color, line_prio, line_layer);
+        render_line_mode3(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_);
         break;
       case 4:
-        render_line_mode4(mosaiced_y, line_color, line_prio, line_layer);
+        render_line_mode4(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_);
         break;
       default:
         for (int x = 0; x < width_; ++x) {
           std::uint8_t r = static_cast<std::uint8_t>((x + frame_counter_ * 2) % 256);
           std::uint8_t g = static_cast<std::uint8_t>((y + frame_counter_) % 256);
           std::uint8_t b = static_cast<std::uint8_t>((x ^ y ^ static_cast<int>(frame_counter_)) & 0xFF);
-          line_color[static_cast<std::size_t>(x)] =
+          line_color_buf_[static_cast<std::size_t>(x)] =
               (0xFFu << 24) | (static_cast<std::uint32_t>(r) << 16) |
               (static_cast<std::uint32_t>(g) << 8) | static_cast<std::uint32_t>(b);
-          line_prio[static_cast<std::size_t>(x)] = 4;
-          line_layer[static_cast<std::size_t>(x)] = kLayerBd;
+          line_prio_buf_[static_cast<std::size_t>(x)] = 4;
+          line_layer_buf_[static_cast<std::size_t>(x)] = kLayerBd;
         }
         break;
     }
@@ -537,7 +558,8 @@ void GbaCore::render_line(int y) {
     if (mosaic_obj_h > 1) {
       obj_y = y - (y % mosaic_obj_h);
     }
-    render_line_sprites(obj_y, obj_color, obj_prio, obj_semi, obj_present, obj_window);
+    render_line_sprites(obj_y, obj_color_buf_, obj_prio_buf_, obj_semi_buf_, obj_present_buf_,
+                        obj_window_buf_);
   }
 
   std::uint16_t winout = bus_.read_io16(0x0400004Au);
@@ -579,7 +601,7 @@ void GbaCore::render_line(int y) {
     win1_top = static_cast<int>((win1v >> 8) & 0xFF);
   }
 
-  std::vector<std::uint8_t> win_mask(static_cast<std::size_t>(width_), outside_mask);
+  std::fill(win_mask_buf_.begin(), win_mask_buf_.end(), outside_mask);
   if (win0_enabled || win1_enabled || winobj_enabled) {
     bool in_win0_y = win0_enabled && in_window_range(y, win0_top, win0_bottom);
     bool in_win1_y = win1_enabled && in_window_range(y, win1_top, win1_bottom);
@@ -587,10 +609,10 @@ void GbaCore::render_line(int y) {
       bool in0 = in_win0_y && in_window_range(x, win0_left, win0_right);
       bool in1 = in_win1_y && in_window_range(x, win1_left, win1_right);
       if (in1) {
-        win_mask[static_cast<std::size_t>(x)] = win1_mask;
+        win_mask_buf_[static_cast<std::size_t>(x)] = win1_mask;
       }
       if (in0) {
-        win_mask[static_cast<std::size_t>(x)] = win0_mask;
+        win_mask_buf_[static_cast<std::size_t>(x)] = win0_mask;
       }
     }
   }
@@ -619,32 +641,33 @@ void GbaCore::render_line(int y) {
     if (mosaic_bg_w > 1) {
       int mx = x - (x % mosaic_bg_w);
       if (mx != x) {
-        line_color[static_cast<std::size_t>(x)] = line_color[static_cast<std::size_t>(mx)];
-        line_prio[static_cast<std::size_t>(x)] = line_prio[static_cast<std::size_t>(mx)];
-        line_layer[static_cast<std::size_t>(x)] = line_layer[static_cast<std::size_t>(mx)];
+        line_color_buf_[static_cast<std::size_t>(x)] = line_color_buf_[static_cast<std::size_t>(mx)];
+        line_prio_buf_[static_cast<std::size_t>(x)] = line_prio_buf_[static_cast<std::size_t>(mx)];
+        line_layer_buf_[static_cast<std::size_t>(x)] = line_layer_buf_[static_cast<std::size_t>(mx)];
       }
     }
     if (mosaic_obj_w > 1) {
       int mx = x - (x % mosaic_obj_w);
       if (mx != x) {
-        obj_color[static_cast<std::size_t>(x)] = obj_color[static_cast<std::size_t>(mx)];
-        obj_prio[static_cast<std::size_t>(x)] = obj_prio[static_cast<std::size_t>(mx)];
-        obj_semi[static_cast<std::size_t>(x)] = obj_semi[static_cast<std::size_t>(mx)];
-        obj_present[static_cast<std::size_t>(x)] = obj_present[static_cast<std::size_t>(mx)];
-        obj_window[static_cast<std::size_t>(x)] = obj_window[static_cast<std::size_t>(mx)];
+        obj_color_buf_[static_cast<std::size_t>(x)] = obj_color_buf_[static_cast<std::size_t>(mx)];
+        obj_prio_buf_[static_cast<std::size_t>(x)] = obj_prio_buf_[static_cast<std::size_t>(mx)];
+        obj_semi_buf_[static_cast<std::size_t>(x)] = obj_semi_buf_[static_cast<std::size_t>(mx)];
+        obj_present_buf_[static_cast<std::size_t>(x)] =
+            obj_present_buf_[static_cast<std::size_t>(mx)];
+        obj_window_buf_[static_cast<std::size_t>(x)] = obj_window_buf_[static_cast<std::size_t>(mx)];
       }
     }
-    std::uint8_t mask = win_mask[static_cast<std::size_t>(x)];
-    if (winobj_enabled && obj_window[static_cast<std::size_t>(x)] &&
+    std::uint8_t mask = win_mask_buf_[static_cast<std::size_t>(x)];
+    if (winobj_enabled && obj_window_buf_[static_cast<std::size_t>(x)] &&
         mask == outside_mask) {
       mask = obj_mask;
     }
     bool effects_enabled = (mask & (1u << 5)) != 0;
     bool obj_allowed = (mask & (1u << 4)) != 0;
 
-    int base_layer = line_layer[static_cast<std::size_t>(x)];
-    std::uint32_t base_color = line_color[static_cast<std::size_t>(x)];
-    int base_prio = line_prio[static_cast<std::size_t>(x)];
+    int base_layer = line_layer_buf_[static_cast<std::size_t>(x)];
+    std::uint32_t base_color = line_color_buf_[static_cast<std::size_t>(x)];
+    int base_prio = line_prio_buf_[static_cast<std::size_t>(x)];
     if (base_layer >= kLayerBg0 && base_layer <= kLayerBg3) {
       if ((mask & (1u << base_layer)) == 0) {
         base_layer = kLayerBd;
@@ -653,10 +676,10 @@ void GbaCore::render_line(int y) {
       }
     }
 
-    bool have_obj = obj_present[static_cast<std::size_t>(x)] && obj_allowed;
-    std::uint32_t obj_col = obj_color[static_cast<std::size_t>(x)];
-    int obj_pr = obj_prio[static_cast<std::size_t>(x)];
-    bool obj_is_semi = obj_semi[static_cast<std::size_t>(x)];
+    bool have_obj = obj_present_buf_[static_cast<std::size_t>(x)] && obj_allowed;
+    std::uint32_t obj_col = obj_color_buf_[static_cast<std::size_t>(x)];
+    int obj_pr = obj_prio_buf_[static_cast<std::size_t>(x)];
+    bool obj_is_semi = obj_semi_buf_[static_cast<std::size_t>(x)];
 
     std::uint32_t top_color = base_color;
     int top_layer = base_layer;
@@ -757,7 +780,7 @@ void GbaCore::render_line_mode3(int y,
   std::uint32_t base = 0x06000000u + static_cast<std::uint32_t>(y) * width_ * 2u;
   for (int x = 0; x < width_; ++x) {
     if (bg2) {
-      std::uint16_t pixel = bus_.read16(base + static_cast<std::uint32_t>(x) * 2u);
+      std::uint16_t pixel = bus_.read_vram16_fast(base + static_cast<std::uint32_t>(x) * 2u);
       line_color[static_cast<std::size_t>(x)] = bgr555_to_argb(pixel);
       line_prio[static_cast<std::size_t>(x)] = bg2_prio;
       line_layer[static_cast<std::size_t>(x)] = 2;
@@ -776,14 +799,15 @@ void GbaCore::render_line_mode4(int y,
   std::uint16_t dispcnt = bus_.read_io16(0x04000000);
   bool bg2 = (dispcnt & 0x0400) != 0;
   int bg2_prio = bus_.read_io16(0x0400000Cu) & 0x3;
-  std::uint16_t backdrop = bus_.read16(0x05000000u);
+  std::uint16_t backdrop = bus_.read_palette16_fast(0x05000000u);
   std::uint32_t backdrop_color = bgr555_to_argb(backdrop);
   std::uint32_t page = (dispcnt & 0x0010) ? 0x0000A000u : 0x00000000u;
   std::uint32_t base = 0x06000000u + page + static_cast<std::uint32_t>(y) * width_;
   for (int x = 0; x < width_; ++x) {
     if (bg2) {
-      std::uint8_t index = bus_.read8(base + static_cast<std::uint32_t>(x));
-      std::uint16_t pal = bus_.read16(0x05000000u + static_cast<std::uint32_t>(index) * 2u);
+      std::uint8_t index = bus_.read_vram8_fast(base + static_cast<std::uint32_t>(x));
+      std::uint16_t pal =
+          bus_.read_palette16_fast(0x05000000u + static_cast<std::uint32_t>(index) * 2u);
       line_color[static_cast<std::size_t>(x)] = bgr555_to_argb(pal);
       line_prio[static_cast<std::size_t>(x)] = bg2_prio;
       line_layer[static_cast<std::size_t>(x)] = 2;
@@ -871,7 +895,7 @@ void GbaCore::render_line_affine_bg(int y,
     std::uint32_t map_addr = screen_base_addr +
                              static_cast<std::uint32_t>(tile_y) * map_width +
                              static_cast<std::uint32_t>(tile_x);
-    std::uint8_t tile_index = bus_.read8(map_addr);
+    std::uint8_t tile_index = bus_.read_vram8_fast(map_addr);
     if (tile_index == 0) {
       continue;
     }
@@ -879,11 +903,12 @@ void GbaCore::render_line_affine_bg(int y,
                               static_cast<std::uint32_t>(tile_index) * 64u +
                               static_cast<std::uint32_t>(in_tile_y) * 8u +
                               static_cast<std::uint32_t>(in_tile_x);
-    std::uint8_t color_index = bus_.read8(tile_addr);
+    std::uint8_t color_index = bus_.read_vram8_fast(tile_addr);
     if (color_index == 0) {
       continue;
     }
-    std::uint16_t pal = bus_.read16(0x05000000u + static_cast<std::uint32_t>(color_index) * 2u);
+    std::uint16_t pal =
+        bus_.read_palette16_fast(0x05000000u + static_cast<std::uint32_t>(color_index) * 2u);
     if (prio < line_prio[static_cast<std::size_t>(x)]) {
       line_color[static_cast<std::size_t>(x)] = bgr555_to_argb(pal);
       line_prio[static_cast<std::size_t>(x)] = prio;
@@ -944,7 +969,7 @@ void GbaCore::render_line_mode0(int y,
     bg[i].blocks_h = bg[i].height / 256;
   }
 
-  std::uint16_t backdrop = bus_.read16(0x05000000u);
+  std::uint16_t backdrop = bus_.read_palette16_fast(0x05000000u);
   std::uint32_t backdrop_color = bgr555_to_argb(backdrop);
   for (int x = 0; x < width_; ++x) {
     std::uint32_t best_color = backdrop_color;
@@ -965,7 +990,7 @@ void GbaCore::render_line_mode0(int y,
                                static_cast<std::uint32_t>(block_index) * 2048u +
                                static_cast<std::uint32_t>(tile_y % 32) * 64u +
                                static_cast<std::uint32_t>(tile_x % 32) * 2u;
-      std::uint16_t entry = bus_.read16(map_addr);
+      std::uint16_t entry = bus_.read_vram16_fast(map_addr);
       int tile_index = entry & 0x03FF;
       bool hflip = (entry & 0x0400) != 0;
       bool vflip = (entry & 0x0800) != 0;
@@ -986,12 +1011,12 @@ void GbaCore::render_line_mode0(int y,
         std::uint32_t tile_addr = tile_base + static_cast<std::uint32_t>(tile_index) * 64u +
                                   static_cast<std::uint32_t>(py) * 8u +
                                   static_cast<std::uint32_t>(px);
-        color_index = bus_.read8(tile_addr);
+        color_index = bus_.read_vram8_fast(tile_addr);
       } else {
         std::uint32_t tile_addr = tile_base + static_cast<std::uint32_t>(tile_index) * 32u +
                                   static_cast<std::uint32_t>(py) * 4u +
                                   static_cast<std::uint32_t>(px / 2);
-        std::uint8_t byte = bus_.read8(tile_addr);
+        std::uint8_t byte = bus_.read_vram8_fast(tile_addr);
         int color = (px & 1) ? (byte >> 4) : (byte & 0x0F);
         if (color == 0) {
           continue;
@@ -1002,7 +1027,8 @@ void GbaCore::render_line_mode0(int y,
       if (color_index == 0) {
         continue;
       }
-      std::uint16_t pal = bus_.read16(0x05000000u + static_cast<std::uint32_t>(color_index) * 2u);
+      std::uint16_t pal =
+          bus_.read_palette16_fast(0x05000000u + static_cast<std::uint32_t>(color_index) * 2u);
       std::uint32_t color = bgr555_to_argb(pal);
       if (bg[i].priority < best_priority) {
         best_priority = bg[i].priority;
@@ -1033,13 +1059,13 @@ void GbaCore::render_line_sprites(int y,
       {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
   };
 
-  std::vector<int> obj_index(static_cast<std::size_t>(width_), 128);
+  std::fill(obj_index_buf_.begin(), obj_index_buf_.end(), 128);
 
   for (int i = 0; i < 128; ++i) {
     std::uint32_t base = kOamBase + static_cast<std::uint32_t>(i) * 8u;
-    std::uint16_t attr0 = bus_.read16(base);
-    std::uint16_t attr1 = bus_.read16(base + 2);
-    std::uint16_t attr2 = bus_.read16(base + 4);
+    std::uint16_t attr0 = bus_.read_oam16_fast(base);
+    std::uint16_t attr1 = bus_.read_oam16_fast(base + 2);
+    std::uint16_t attr2 = bus_.read_oam16_fast(base + 4);
 
     bool affine = (attr0 & 0x0100) != 0;
     bool double_size = (attr0 & 0x0200) != 0;
@@ -1096,10 +1122,10 @@ void GbaCore::render_line_sprites(int y,
       std::uint32_t aff_base = kOamBase + static_cast<std::uint32_t>(affine_index) * 32u;
       // Affine params are stored in the 4th halfword of each of the 4 OAM
       // entries in a matrix block: +6, +E, +16, +1E.
-      pa = static_cast<std::int16_t>(bus_.read16(aff_base + 0x06));
-      pb = static_cast<std::int16_t>(bus_.read16(aff_base + 0x0E));
-      pc = static_cast<std::int16_t>(bus_.read16(aff_base + 0x16));
-      pd = static_cast<std::int16_t>(bus_.read16(aff_base + 0x1E));
+      pa = static_cast<std::int16_t>(bus_.read_oam16_fast(aff_base + 0x06));
+      pb = static_cast<std::int16_t>(bus_.read_oam16_fast(aff_base + 0x0E));
+      pc = static_cast<std::int16_t>(bus_.read_oam16_fast(aff_base + 0x16));
+      pd = static_cast<std::int16_t>(bus_.read_oam16_fast(aff_base + 0x1E));
     }
 
     for (int x = 0; x < disp_w; ++x) {
@@ -1140,12 +1166,13 @@ void GbaCore::render_line_sprites(int y,
           static_cast<std::uint32_t>(in_tile_y) * (color_8bpp ? 8u : 4u);
       int color_index = 0;
       if (color_8bpp) {
-        color_index = bus_.read8(tile_addr + static_cast<std::uint32_t>(in_tile_x));
+        color_index = bus_.read_vram8_fast(tile_addr + static_cast<std::uint32_t>(in_tile_x));
         if (color_index == 0) {
           continue;
         }
       } else {
-        std::uint8_t byte = bus_.read8(tile_addr + static_cast<std::uint32_t>(in_tile_x / 2));
+        std::uint8_t byte =
+            bus_.read_vram8_fast(tile_addr + static_cast<std::uint32_t>(in_tile_x / 2));
         int nibble = (in_tile_x & 1) ? (byte >> 4) : (byte & 0x0F);
         if (nibble == 0) {
           continue;
@@ -1161,14 +1188,14 @@ void GbaCore::render_line_sprites(int y,
       if (!obj_present[static_cast<std::size_t>(screen_x)] ||
           prio < obj_prio[static_cast<std::size_t>(screen_x)] ||
           (prio == obj_prio[static_cast<std::size_t>(screen_x)] &&
-           i < obj_index[static_cast<std::size_t>(screen_x)])) {
-        std::uint16_t pal = bus_.read16(kObjPaletteBase +
-                                        static_cast<std::uint32_t>(color_index) * 2u);
+           i < obj_index_buf_[static_cast<std::size_t>(screen_x)])) {
+        std::uint16_t pal = bus_.read_palette16_fast(
+            kObjPaletteBase + static_cast<std::uint32_t>(color_index) * 2u);
         obj_color[static_cast<std::size_t>(screen_x)] = bgr555_to_argb(pal);
         obj_prio[static_cast<std::size_t>(screen_x)] = prio;
         obj_semi[static_cast<std::size_t>(screen_x)] = (obj_mode == 1);
         obj_present[static_cast<std::size_t>(screen_x)] = true;
-        obj_index[static_cast<std::size_t>(screen_x)] = i;
+        obj_index_buf_[static_cast<std::size_t>(screen_x)] = i;
       }
     }
   }
