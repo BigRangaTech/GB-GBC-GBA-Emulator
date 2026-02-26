@@ -1,10 +1,10 @@
-Start testing: Feb 22 23:32 AEST
+Start testing: Feb 26 17:13 AEST
 ----------------------------------------------------------
 1/1 Testing: gbemu_tests
 1/1 Test: gbemu_tests
 Command: "/home/jessie/Documents/GB-GBC-GBA-Emulator/build/tests/gbemu_tests"
 Directory: /home/jessie/Documents/GB-GBC-GBA-Emulator/build/tests
-"gbemu_tests" start time: Feb 22 23:32 AEST
+"gbemu_tests" start time: Feb 26 17:13 AEST
 Output:
 ----------------------------------------------------------
 Test-Games folder not found. Skipping ROM scan.
@@ -13,8 +13,8 @@ All tests passed.
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"gbemu_tests" end time: Feb 22 23:32 AEST
+"gbemu_tests" end time: Feb 26 17:13 AEST
 "gbemu_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Feb 22 23:32 AEST
+End testing: Feb 26 17:13 AEST

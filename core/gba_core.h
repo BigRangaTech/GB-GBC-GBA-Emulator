@@ -37,7 +37,7 @@ class GbaCore {
                      int count,
                      bool read,
                      bool write);
-  void set_log_swi(int limit) { cpu_.set_log_swi(limit); }
+  void set_log_swi(int limit);
   void set_watchdog_steps(int steps);
   void set_pc_watch(std::uint32_t start, std::uint32_t end, int count);
   void set_keyinput(std::uint16_t value);
@@ -53,6 +53,8 @@ class GbaCore {
     auto_patch_end_ = end;
   }
   void set_hle_swi(bool enabled) { hle_swi_enabled_ = enabled; }
+  void set_trace_assert(bool enabled) { trace_assert_ = enabled; }
+  void set_bypass_assert(bool enabled) { bypass_assert_ = enabled; }
 
  private:
   void render_placeholder();
@@ -162,10 +164,20 @@ class GbaCore {
   void report_watchdog();
   void fast_boot_to_rom();
   bool handle_swi_hle(std::uint32_t pc_before, bool thumb_before, std::uint32_t op_before, int* cycles_out);
+  void apply_assert_bypass_patches();
   void auto_patch_tick(std::uint32_t pc_before,
                        std::uint32_t pc_after,
                        std::uint32_t op_before,
                        bool thumb_before);
+  std::string read_rom_string(std::uint32_t address, std::size_t max_len) const;
+  bool handle_butano_assert(std::uint32_t pc_before, bool thumb_before, int* cycles_out);
+
+  bool trace_assert_ = false;
+  bool bypass_assert_ = false;
+  bool assert_bypass_patched_ = false;
+  int hle_swi_log_limit_ = 0;
+  int hle_swi_log_count_ = 0;
+  std::string rom_game_code_;
 };
 
 } // namespace gbemu::core

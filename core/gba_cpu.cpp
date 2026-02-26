@@ -1066,7 +1066,9 @@ int GbaCpu::step(GbaBus* bus) {
     return 4;
   }
 
-  if ((op & 0x0E400090u) == 0x00000090u) {
+  // Halfword/signed transfer (LDRH/STRH/LDRSB/LDRSH) accepts both
+  // register-offset (I=0) and immediate-offset (I=1) encodings.
+  if ((op & 0x0E000090u) == 0x00000090u && (op & 0x00000060u) != 0) {
     bool p = (op & (1u << 24)) != 0;
     bool u = (op & (1u << 23)) != 0;
     bool w = (op & (1u << 21)) != 0;
@@ -1097,14 +1099,16 @@ int GbaCpu::step(GbaBus* bus) {
       regs_.r[rn] = next;
     }
     if (l) {
-      if (h) {
+      if (h && s) {
+        std::int16_t value = static_cast<std::int16_t>(bus->read16(addr));
+        regs_.r[rd] = static_cast<std::int32_t>(value);
+      } else if (h) {
         regs_.r[rd] = bus->read16(addr);
       } else if (s) {
         std::int8_t value = static_cast<std::int8_t>(bus->read8(addr));
         regs_.r[rd] = static_cast<std::int32_t>(value);
       } else {
-        std::int16_t value = static_cast<std::int16_t>(bus->read16(addr));
-        regs_.r[rd] = static_cast<std::int32_t>(value);
+        regs_.r[rd] = bus->read16(addr);
       }
     } else {
       if (h) {
@@ -1179,8 +1183,8 @@ int GbaCpu::step(GbaBus* bus) {
       if (l) {
         std::uint32_t value = b ? bus->read8(addr) : bus->read32(addr);
         if (rd == 15) {
-          set_thumb((value & 1u) != 0);
-          regs_.r[15] = value & ~1u;
+          // ARM7TDMI does not interwork on LDR/POP PC in ARM state.
+          regs_.r[15] = value & ~3u;
         } else {
           regs_.r[rd] = value;
         }
@@ -1239,8 +1243,7 @@ int GbaCpu::step(GbaBus* bus) {
       if (l) {
         std::uint32_t value = b ? bus->read8(addr) : bus->read32(addr);
         if (rd == 15) {
-          set_thumb((value & 1u) != 0);
-          regs_.r[15] = value & ~1u;
+          regs_.r[15] = value & ~3u;
         } else {
           regs_.r[rd] = value;
         }
@@ -1278,8 +1281,7 @@ int GbaCpu::step(GbaBus* bus) {
       if (l) {
         std::uint32_t value = b ? bus->read8(addr) : bus->read32(addr);
         if (rd == 15) {
-          set_thumb((value & 1u) != 0);
-          regs_.r[15] = value & ~1u;
+          regs_.r[15] = value & ~3u;
         } else {
           regs_.r[rd] = value;
         }
@@ -1388,8 +1390,7 @@ int GbaCpu::step(GbaBus* bus) {
       if (s && (reg_list & (1u << 15))) {
         regs_.r[15] = loaded_pc & (thumb_ ? ~1u : ~3u);
       } else {
-        set_thumb((loaded_pc & 1u) != 0);
-        regs_.r[15] = loaded_pc & ~1u;
+        regs_.r[15] = loaded_pc & ~3u;
       }
     }
     if (w) {

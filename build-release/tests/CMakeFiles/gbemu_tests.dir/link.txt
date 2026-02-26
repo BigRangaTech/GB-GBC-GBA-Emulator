@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/gbemu_tests.dir/link.d CMakeFiles/gbemu_tests.dir/tests.cpp.o -o gbemu_tests  ../core/libgbemu_core.a ../common/libgbemu_common.a

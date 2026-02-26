@@ -266,6 +266,20 @@ void EmulatorCore::set_gba_hle_swi(bool enabled) {
   gba_.set_hle_swi(enabled);
 }
 
+void EmulatorCore::set_gba_trace_assert(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_trace_assert(enabled);
+}
+
+void EmulatorCore::set_gba_bypass_assert(bool enabled) {
+  if (system_ != System::GBA) {
+    return;
+  }
+  gba_.set_bypass_assert(enabled);
+}
+
 void EmulatorCore::set_joypad_state(std::uint8_t state) {
   if (system_ == System::GBA) {
     std::uint16_t keyinput = static_cast<std::uint16_t>(state) & 0xFF;

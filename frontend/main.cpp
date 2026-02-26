@@ -1399,6 +1399,8 @@ struct Options {
   bool gba_fastboot = false;
   bool gba_auto_handoff = true;
   bool gba_hle_swi = false;
+  bool gba_trace_assert = false;
+  bool gba_bypass_assert = false;
   int gba_unimp_limit = 0;
   int gba_watch_video_io = 0;
   int gba_io_read_watch = 0;
@@ -1450,6 +1452,8 @@ void print_usage(const char* exe) {
   std::cout << "  --gba-fastboot         Skip GBA BIOS and jump straight to ROM\n";
   std::cout << "  --gba-no-auto-handoff  Disable auto handoff to ROM after POSTFLG\n";
   std::cout << "  --gba-hle-swi          HLE SWI 0x04/0x05/0x0B/0x0C (IntrWait/VBlankIntrWait/CPUSet/CPUFastSet)\n";
+  std::cout << "  --gba-trace-assert     Log Butano assert file/line/function/expression\n";
+  std::cout << "  --gba-bypass-assert    Bypass known SBTP bn_sprite_builder assert\n";
   std::cout << "  --gba-unimp <n>        Log first N unimplemented GBA opcodes\n";
   std::cout << "  --gba-video-io <n>     Log first N video IO writes\n";
   std::cout << "  --gba-io-read <n>      Log first N reads of key GBA IO regs\n";
@@ -1614,6 +1618,28 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
       options->gba_hle_swi = *parsed;
     } else {
       std::cout << "Config warning: invalid gba_hle_swi value '" << gba_hle_swi_value << "'\n";
+    }
+  }
+
+  std::string gba_trace_assert_value = config.get_string("gba_trace_assert", "");
+  if (!gba_trace_assert_value.empty()) {
+    auto parsed = parse_bool(gba_trace_assert_value);
+    if (parsed.has_value()) {
+      options->gba_trace_assert = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_trace_assert value '"
+                << gba_trace_assert_value << "'\n";
+    }
+  }
+
+  std::string gba_bypass_assert_value = config.get_string("gba_bypass_assert", "");
+  if (!gba_bypass_assert_value.empty()) {
+    auto parsed = parse_bool(gba_bypass_assert_value);
+    if (parsed.has_value()) {
+      options->gba_bypass_assert = *parsed;
+    } else {
+      std::cout << "Config warning: invalid gba_bypass_assert value '"
+                << gba_bypass_assert_value << "'\n";
     }
   }
 
@@ -2249,6 +2275,10 @@ int main(int argc, char** argv) {
       options.gba_auto_handoff = false;
     } else if (arg == "--gba-hle-swi") {
       options.gba_hle_swi = true;
+    } else if (arg == "--gba-trace-assert") {
+      options.gba_trace_assert = true;
+    } else if (arg == "--gba-bypass-assert") {
+      options.gba_bypass_assert = true;
     } else if (arg == "--gba-trace-steps") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --gba-trace-steps\n";
@@ -2455,6 +2485,10 @@ int main(int argc, char** argv) {
       options.gba_auto_handoff = false;
     } else if (arg == "--gba-hle-swi") {
       options.gba_hle_swi = true;
+    } else if (arg == "--gba-trace-assert") {
+      options.gba_trace_assert = true;
+    } else if (arg == "--gba-bypass-assert") {
+      options.gba_bypass_assert = true;
     } else if (arg == "--gba-trace-steps") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --gba-trace-steps\n";
@@ -2913,6 +2947,8 @@ int main(int argc, char** argv) {
     core.set_gba_auto_handoff(options.gba_auto_handoff);
     core.set_gba_fastboot(options.gba_fastboot);
     core.set_gba_hle_swi(options.gba_hle_swi);
+    core.set_gba_trace_assert(options.gba_trace_assert);
+    core.set_gba_bypass_assert(options.gba_bypass_assert);
     core.set_cpu_trace_enabled(options.cpu_trace);
     if (options.gba_trace_after_rom) {
       core.set_gba_trace_after_rom(options.gba_trace_steps, options.gba_trace_io);

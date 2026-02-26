@@ -56,6 +56,8 @@ class EmulatorCore {
   void set_gba_auto_patch_span(std::uint32_t span);
   void set_gba_auto_patch_range(std::uint32_t start, std::uint32_t end);
   void set_gba_hle_swi(bool enabled);
+  void set_gba_trace_assert(bool enabled);
+  void set_gba_bypass_assert(bool enabled);
   void set_joypad_state(std::uint8_t state);
   void request_interrupt(std::uint8_t bit);
   void generate_audio(int sample_rate, int samples, std::vector<std::int16_t>* out);

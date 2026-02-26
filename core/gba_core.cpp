@@ -57,6 +57,10 @@ bool GbaCore::load(const std::vector<std::uint8_t>& rom,
   if (!bus_.load(rom_data, bios, error)) {
     return false;
   }
+  rom_game_code_.clear();
+  if (rom_data.size() >= 0xB0) {
+    rom_game_code_.assign(reinterpret_cast<const char*>(&rom_data[0xAC]), 4);
+  }
   reset();
   return true;
 }
@@ -117,6 +121,15 @@ void GbaCore::set_mem_watch(std::uint32_t start,
   }
 }
 
+void GbaCore::set_log_swi(int limit) {
+  if (limit < 0) {
+    limit = 0;
+  }
+  cpu_.set_log_swi(limit);
+  hle_swi_log_limit_ = limit;
+  hle_swi_log_count_ = 0;
+}
+
 void GbaCore::set_pc_watch(std::uint32_t start, std::uint32_t end, int count) {
   if (count < 0) {
     count = 0;
@@ -141,6 +154,7 @@ void GbaCore::reset() {
   loop_count_ = 0;
   loop_thumb_ = false;
   auto_patched_pcs_.clear();
+  hle_swi_log_count_ = 0;
   line_cycles_ = 0;
   vcount_ = 0;
   vblank_ = false;
@@ -155,6 +169,7 @@ void GbaCore::reset() {
   post_trace_remaining_ = 0;
   watchdog_counter_ = 0;
   watchdog_.clear();
+  assert_bypass_patched_ = false;
   bus_.set_bios_enabled(true);
   keyinput_ = 0x03FF;
   auto reset_io = [this]() {
@@ -218,6 +233,8 @@ void GbaCore::set_fastboot(bool enabled) {
 }
 
 void GbaCore::step_frame() {
+  apply_assert_bypass_patches();
+
   int cycles = 0;
   auto step_once = [this, &cycles]() -> bool {
     std::uint32_t pc_before = cpu_.pc();
@@ -265,6 +282,20 @@ void GbaCore::step_frame() {
         cycles += hle_cycles;
         return true;
       }
+    }
+
+    int assert_cycles = 0;
+    if (handle_butano_assert(pc_before, thumb_before, &assert_cycles)) {
+      if (assert_cycles <= 0) {
+        assert_cycles = 2;
+      }
+      watchdog_tick(pc_before);
+      step_timers(assert_cycles);
+      step_dma();
+      step_ppu(assert_cycles);
+      service_interrupts();
+      cycles += assert_cycles;
+      return true;
     }
 
     int used = cpu_.step(&bus_);
@@ -1050,7 +1081,11 @@ void GbaCore::render_line_sprites(int y,
     int palette_bank = (attr2 >> 12) & 0xF;
     int tile_index = attr2 & 0x03FF;
 
-  int tiles_per_row = obj_1d ? (sprite_w / 8) : 32;
+    // OBJ attr2 tile index is addressed in 32-byte units.
+    // 8bpp OBJ tiles consume 2 units (64 bytes), so both the base tile and
+    // per-tile offsets must be computed in 32-byte units.
+    int tile_units_per_tile = color_8bpp ? 2 : 1;
+    int tiles_per_row_units = obj_1d ? (sprite_w / 8) * tile_units_per_tile : 32;
 
     int affine_index = (attr1 >> 9) & 0x1F;
     std::int32_t pa = 0;
@@ -1059,10 +1094,12 @@ void GbaCore::render_line_sprites(int y,
     std::int32_t pd = 0;
     if (affine) {
       std::uint32_t aff_base = kOamBase + static_cast<std::uint32_t>(affine_index) * 32u;
+      // Affine params are stored in the 4th halfword of each of the 4 OAM
+      // entries in a matrix block: +6, +E, +16, +1E.
       pa = static_cast<std::int16_t>(bus_.read16(aff_base + 0x06));
-      pb = static_cast<std::int16_t>(bus_.read16(aff_base + 0x0A));
-      pc = static_cast<std::int16_t>(bus_.read16(aff_base + 0x0E));
-      pd = static_cast<std::int16_t>(bus_.read16(aff_base + 0x12));
+      pb = static_cast<std::int16_t>(bus_.read16(aff_base + 0x0E));
+      pc = static_cast<std::int16_t>(bus_.read16(aff_base + 0x16));
+      pd = static_cast<std::int16_t>(bus_.read16(aff_base + 0x1E));
     }
 
     for (int x = 0; x < disp_w; ++x) {
@@ -1095,11 +1132,12 @@ void GbaCore::render_line_sprites(int y,
       int tile_y = src_y / 8;
       int in_tile_x = src_x & 7;
       int in_tile_y = src_y & 7;
-      int tile_offset = tile_y * tiles_per_row + tile_x;
-      int tile = tile_index + tile_offset;
-      std::uint32_t tile_addr = 0x06010000u +
-                                static_cast<std::uint32_t>(tile) * (color_8bpp ? 64u : 32u) +
-                                static_cast<std::uint32_t>(in_tile_y) * (color_8bpp ? 8u : 4u);
+      int tile_offset_units = tile_y * tiles_per_row_units + tile_x * tile_units_per_tile;
+      int tile_base_units = color_8bpp ? (tile_index & ~1) : tile_index;
+      int tile_units = tile_base_units + tile_offset_units;
+      std::uint32_t tile_addr =
+          0x06010000u + static_cast<std::uint32_t>(tile_units) * 32u +
+          static_cast<std::uint32_t>(in_tile_y) * (color_8bpp ? 8u : 4u);
       int color_index = 0;
       if (color_8bpp) {
         color_index = bus_.read8(tile_addr + static_cast<std::uint32_t>(in_tile_x));
@@ -1384,14 +1422,53 @@ void GbaCore::fast_boot_to_rom() {
   cpu_.set_thumb(false);
   cpu_.set_mode(0x1F);
   cpu_.set_irq_disable(false);
+  // Auto-handoff can happen mid-BIOS. Reset GPRs so ROM startup sees a stable
+  // post-BIOS style entry state instead of transient BIOS working values.
+  for (int i = 0; i <= 12; ++i) {
+    cpu_.set_reg(i, 0);
+  }
+  cpu_.set_reg(0, 0x08000000u);
+  cpu_.set_reg(13, 0x03007F00u);
+  cpu_.set_reg(14, 0);
   cpu_.set_pc(0x08000000u);
   cpu_.clear_unimplemented_count();
 }
 
+void GbaCore::apply_assert_bypass_patches() {
+  if (!bypass_assert_ || assert_bypass_patched_) {
+    return;
+  }
+  if (rom_game_code_ != "SBTP") {
+    assert_bypass_patched_ = true;
+    return;
+  }
+
+  const std::uint32_t patch_addrs[] = {
+      0x08010D40u, // original guard
+      0x08005A28u, // bn_sprite_builder.cpp.h:39 assert BL (halfword 1)
+      0x08005A2Au, // bn_sprite_builder.cpp.h:39 assert BL (halfword 2)
+      0x08004B8Cu, // bn_vector.h:445 assert BL (halfword 1)
+      0x08004B8Eu, // bn_vector.h:445 assert BL (halfword 2)
+      0x080030F6u, // bn_vector.h:445 assert BL (halfword 1)
+      0x080030F8u, // bn_vector.h:445 assert BL (halfword 2)
+  };
+  for (std::uint32_t addr : patch_addrs) {
+    bool patched = bus_.patch_rom16(addr, 0x46C0u);
+    if (patched) {
+      std::cout << "GBA ASSERT BYPASS PATCH: NOP at PC=0x" << std::hex << std::setw(8)
+                << std::setfill('0') << addr << std::dec << "\n";
+    } else {
+      std::cout << "GBA ASSERT BYPASS PATCH: failed at PC=0x" << std::hex << std::setw(8)
+                << std::setfill('0') << addr << std::dec << "\n";
+    }
+  }
+  assert_bypass_patched_ = true;
+}
+
 void GbaCore::handoff_to_rom() {
-  cpu_.set_thumb(false);
-  cpu_.set_pc(0x08000000u);
-  cpu_.clear_unimplemented_count();
+  // Complete handoff using the same CPU mode/stack baseline as fastboot.
+  // Auto-handoff can trigger before BIOS finishes all register setup.
+  fast_boot_to_rom();
 }
 
 bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
@@ -1418,19 +1495,22 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     return false;
   }
 
-  if (cycles_out) {
-    *cycles_out = thumb_before ? 3 : 4;
+  int hle_cycles = thumb_before ? 3 : 4;
+  if (hle_swi_log_limit_ > 0 && hle_swi_log_count_ < hle_swi_log_limit_) {
+    ++hle_swi_log_count_;
+    std::cout << "GBA HLE SWI " << (thumb_before ? "T" : "A") << " PC=0x" << std::hex
+              << std::setw(8) << std::setfill('0') << pc_before << " IMM=0x" << std::setw(2)
+              << imm << std::dec << "\n";
   }
-  std::cout << "GBA HLE SWI " << (thumb_before ? "T" : "A") << " PC=0x" << std::hex
-            << std::setw(8) << std::setfill('0') << pc_before << " IMM=0x" << std::setw(2)
-            << imm << std::dec << "\n";
 
   std::uint16_t wait_mask = 0;
   bool clear_if = false;
   if (imm == 0x05) {
+    // VBlankIntrWait: wait for VBlank IRQ (bit 0).
     wait_mask = 0x0001u;
     clear_if = true;
   } else if (imm == 0x04) {
+    // IntrWait: R0 controls IF clear behavior, R1 is IRQ bit mask.
     clear_if = (cpu_.reg(0) != 0);
     wait_mask = static_cast<std::uint16_t>(cpu_.reg(1) & 0xFFFFu);
   } else if (imm == 0x0B) {
@@ -1439,8 +1519,17 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     std::uint32_t ctrl = cpu_.reg(2);
     std::uint32_t count = ctrl & 0x1FFFFFu;
     if (count != 0) {
-      bool transfer32 = (ctrl & (1u << 24)) != 0;
-      bool fill = (ctrl & (1u << 26)) != 0;
+      // SWI 0x0B (CpuSet):
+      // bit24 = fixed source (fill), bit26 = 32-bit transfer.
+      bool fill = (ctrl & (1u << 24)) != 0;
+      bool transfer32 = (ctrl & (1u << 26)) != 0;
+      if (transfer32) {
+        src &= ~3u;
+        dst &= ~3u;
+      } else {
+        src &= ~1u;
+        dst &= ~1u;
+      }
       if (transfer32) {
         std::uint32_t value = fill ? bus_.read32(src) : 0;
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -1458,6 +1547,13 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
           bus_.write16(dst + i * 2u, value);
         }
       }
+      // Keep rough timing proportional to transfer size so frame pacing and
+      // IRQ cadence stay closer to BIOS behavior.
+      std::uint64_t cost = 6u + static_cast<std::uint64_t>(count) * (transfer32 ? 4u : 2u);
+      if (cost > 200000u) {
+        cost = 200000u;
+      }
+      hle_cycles = static_cast<int>(cost);
     }
   } else if (imm == 0x0C) {
     std::uint32_t src = cpu_.reg(0);
@@ -1466,7 +1562,10 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     std::uint32_t count = ctrl & 0x1FFFFFu;
     if (count != 0) {
       bool fill = (ctrl & (1u << 24)) != 0;
-      std::uint32_t total_words = count * 8u;
+      src &= ~3u;
+      dst &= ~3u;
+      // CpuFastSet count is in 32-bit words and is processed in blocks of 8.
+      std::uint32_t total_words = count & ~7u;
       std::uint32_t value = fill ? bus_.read32(src) : 0;
       for (std::uint32_t i = 0; i < total_words; ++i) {
         if (!fill) {
@@ -1474,6 +1573,11 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
         }
         bus_.write32(dst + i * 4u, value);
       }
+      std::uint64_t cost = 10u + static_cast<std::uint64_t>(total_words) * 2u;
+      if (cost > 200000u) {
+        cost = 200000u;
+      }
+      hle_cycles = static_cast<int>(cost);
     }
   }
 
@@ -1493,6 +1597,10 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
       swi_wait_active_ = false;
       swi_wait_mask_ = 0;
     }
+  }
+
+  if (cycles_out) {
+    *cycles_out = hle_cycles;
   }
   cpu_.set_pc(pc_before + (thumb_before ? 2u : 4u));
   return true;
@@ -1631,6 +1739,57 @@ void GbaCore::auto_patch_tick(std::uint32_t pc_before,
               << std::setw(8) << std::setfill('0') << pc_before
               << " -> NOP\n" << std::dec;
   }
+}
+
+std::string GbaCore::read_rom_string(std::uint32_t address, std::size_t max_len) const {
+  if (address < 0x08000000u || max_len == 0) {
+    return {};
+  }
+  std::string result;
+  result.reserve(max_len);
+  for (std::size_t i = 0; i < max_len; ++i) {
+    std::uint8_t c = bus_.read8(address + static_cast<std::uint32_t>(i));
+    if (c == 0) {
+      break;
+    }
+    if (c < 0x20 || c > 0x7E) {
+      break;
+    }
+    result.push_back(static_cast<char>(c));
+  }
+  return result;
+}
+
+bool GbaCore::handle_butano_assert(std::uint32_t pc_before, bool thumb_before, int* cycles_out) {
+  constexpr std::uint32_t kButanoAssertPc = 0x0800A444u;
+  if (!thumb_before || pc_before != kButanoAssertPc) {
+    return false;
+  }
+  if (!trace_assert_ && !bypass_assert_) {
+    return false;
+  }
+
+  const std::uint32_t expr_ptr = cpu_.reg(0);
+  const std::uint32_t file_ptr = cpu_.reg(1);
+  const std::uint32_t func_ptr = cpu_.reg(2);
+  const std::uint32_t line = cpu_.reg(4);
+  const std::uint32_t lr = cpu_.reg(14);
+  const std::uint32_t sp = cpu_.reg(13);
+  const std::string expr = read_rom_string(expr_ptr, 160);
+  const std::string file = read_rom_string(file_ptr, 160);
+  const std::string func = read_rom_string(func_ptr, 80);
+
+  if (trace_assert_) {
+    std::cout << "GBA ASSERT: file=" << (file.empty() ? "<unknown>" : file)
+              << " line=" << std::dec << line
+              << " func=" << (func.empty() ? "<unknown>" : func)
+              << " expr=" << (expr.empty() ? "<unknown>" : expr)
+              << " LR=0x" << std::hex << std::setw(8) << std::setfill('0') << lr
+              << " SP=0x" << std::setw(8) << sp << std::dec << "\n";
+  }
+
+  (void)cycles_out;
+  return false;
 }
 
 void GbaCore::step_dma() {
