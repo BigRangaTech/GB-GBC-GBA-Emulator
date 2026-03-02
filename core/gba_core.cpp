@@ -1,10 +1,13 @@
 #include "gba_core.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 
+#include "state_io.h"
 #include "timing.h"
 
 namespace gbemu::core {
@@ -20,6 +23,7 @@ constexpr int kGbaLinesPerFrame = 228;
 constexpr int kGbaVblankStart = 160;
 constexpr int kGbaVisibleCycles = 960;
 constexpr int kGbaCyclesPerLine = 1232;
+constexpr double kTwoPi = 6.28318530717958647692;
 
 bool in_window_range(int value, int start, int end) {
   if (start == end) {
@@ -37,6 +41,92 @@ std::uint32_t bgr555_to_argb(std::uint16_t pixel) {
   std::uint8_t b = static_cast<std::uint8_t>(((pixel >> 10) & 0x1F) * 255 / 31);
   return (0xFFu << 24) | (static_cast<std::uint32_t>(r) << 16) |
          (static_cast<std::uint32_t>(g) << 8) | static_cast<std::uint32_t>(b);
+}
+
+std::uint32_t isqrt32(std::uint32_t value) {
+  std::uint32_t root = 0;
+  std::uint32_t bit = 1u << 30;
+  while (bit > value) {
+    bit >>= 2;
+  }
+  while (bit != 0) {
+    if (value >= root + bit) {
+      value -= root + bit;
+      root = (root >> 1) + bit;
+    } else {
+      root >>= 1;
+    }
+    bit >>= 2;
+  }
+  return root;
+}
+
+bool gba_signed_div(std::int32_t num,
+                    std::int32_t den,
+                    std::int32_t* quotient_out,
+                    std::int32_t* remainder_out,
+                    std::uint32_t* abs_quotient_out) {
+  if (den == 0) {
+    return false;
+  }
+
+  std::int32_t quotient = 0;
+  std::int32_t remainder = 0;
+  if (num == std::numeric_limits<std::int32_t>::min() && den == -1) {
+    quotient = std::numeric_limits<std::int32_t>::min();
+    remainder = 0;
+  } else {
+    quotient = num / den;
+    remainder = num % den;
+  }
+
+  std::uint32_t abs_quotient = 0;
+  if (quotient < 0) {
+    if (quotient == std::numeric_limits<std::int32_t>::min()) {
+      abs_quotient = 0x80000000u;
+    } else {
+      abs_quotient = static_cast<std::uint32_t>(-quotient);
+    }
+  } else {
+    abs_quotient = static_cast<std::uint32_t>(quotient);
+  }
+
+  *quotient_out = quotient;
+  *remainder_out = remainder;
+  *abs_quotient_out = abs_quotient;
+  return true;
+}
+
+std::int32_t asr_div_pow2(std::int64_t value, int shift) {
+  if (shift <= 0) {
+    return static_cast<std::int32_t>(value);
+  }
+  std::int64_t denom = 1LL << shift;
+  if (value >= 0) {
+    return static_cast<std::int32_t>(value / denom);
+  }
+  return static_cast<std::int32_t>(-(((-value) + denom - 1) / denom));
+}
+
+void calc_affine_matrix(std::int16_t sx,
+                        std::int16_t sy,
+                        std::uint16_t angle,
+                        std::int16_t* pa_out,
+                        std::int16_t* pb_out,
+                        std::int16_t* pc_out,
+                        std::int16_t* pd_out) {
+  std::uint8_t phase = static_cast<std::uint8_t>(angle >> 8);
+  double theta = static_cast<double>(phase) * (kTwoPi / 256.0);
+  std::int32_t cos14 = static_cast<std::int32_t>(std::lround(std::cos(theta) * 16384.0));
+  std::int32_t sin14 = static_cast<std::int32_t>(std::lround(std::sin(theta) * 16384.0));
+  std::int32_t pa = asr_div_pow2(static_cast<std::int64_t>(sx) * cos14, 14);
+  std::int32_t pb = asr_div_pow2(-static_cast<std::int64_t>(sx) * sin14, 14);
+  std::int32_t pc = asr_div_pow2(static_cast<std::int64_t>(sy) * sin14, 14);
+  std::int32_t pd = asr_div_pow2(static_cast<std::int64_t>(sy) * cos14, 14);
+  *pa_out = static_cast<std::int16_t>(pa);
+  *pb_out = static_cast<std::int16_t>(pb);
+  *pc_out = static_cast<std::int16_t>(pc);
+  *pd_out = static_cast<std::int16_t>(pd);
 }
 
 } // namespace
@@ -245,6 +335,267 @@ void GbaCore::set_fastboot(bool enabled) {
   if (fastboot_enabled_) {
     fast_boot_to_rom();
   }
+}
+
+void GbaCore::serialize(std::vector<std::uint8_t>* out) const {
+  if (!out) {
+    return;
+  }
+  using namespace gbemu::core::state_io;
+
+  write_u32(*out, static_cast<std::uint32_t>(width_));
+  write_u32(*out, static_cast<std::uint32_t>(height_));
+  write_u64(*out, frame_counter_);
+  write_bool(*out, bios_handoff_done_);
+  write_u32(*out, static_cast<std::uint32_t>(bios_watchdog_cycles_));
+  write_u32(*out, static_cast<std::uint32_t>(line_cycles_));
+  write_u32(*out, static_cast<std::uint32_t>(vcount_));
+  write_bool(*out, vblank_);
+  write_bool(*out, hblank_);
+  write_bool(*out, halted_);
+  write_bool(*out, swi_wait_active_);
+  write_u16(*out, swi_wait_mask_);
+  write_u32(*out, static_cast<std::uint32_t>(trace_steps_remaining_));
+  write_bool(*out, trace_stop_on_rom_);
+  write_bool(*out, trace_stop_notified_);
+  write_bool(*out, trace_start_on_rom_);
+  write_bool(*out, trace_start_notified_);
+  write_u32(*out, static_cast<std::uint32_t>(post_trace_remaining_));
+  write_bool(*out, pc_watch_enabled_);
+  write_u32(*out, pc_watch_start_);
+  write_u32(*out, pc_watch_end_);
+  write_u32(*out, static_cast<std::uint32_t>(pc_watch_remaining_));
+  write_u16(*out, keyinput_);
+  write_bool(*out, gba_color_correct_);
+  write_bool(*out, auto_handoff_enabled_);
+  write_bool(*out, fastboot_enabled_);
+  write_bool(*out, auto_patch_hang_);
+  write_bool(*out, hle_swi_enabled_);
+  write_bool(*out, trace_assert_);
+  write_bool(*out, bypass_assert_);
+  write_bool(*out, assert_bypass_patched_);
+  write_u32(*out, static_cast<std::uint32_t>(hle_swi_log_limit_));
+  write_u32(*out, static_cast<std::uint32_t>(hle_swi_log_count_));
+  write_u32(*out, static_cast<std::uint32_t>(auto_patch_threshold_));
+  write_u32(*out, auto_patch_span_);
+  write_u32(*out, auto_patch_start_);
+  write_u32(*out, auto_patch_end_);
+  write_u32(*out, loop_pc_);
+  write_u32(*out, loop_target_);
+  write_u32(*out, static_cast<std::uint32_t>(loop_count_));
+  write_bool(*out, loop_thumb_);
+  write_u32(*out, static_cast<std::uint32_t>(watchdog_steps_));
+  write_u32(*out, static_cast<std::uint32_t>(watchdog_counter_));
+  write_string(*out, rom_game_code_);
+
+  cpu_.serialize(out);
+  bus_.serialize(out);
+
+  write_u32(*out, static_cast<std::uint32_t>(timers_->reload));
+  write_u32(*out, static_cast<std::uint32_t>(timers_->counter));
+  write_u16(*out, timers_->control);
+  write_u32(*out, timers_->accum);
+  for (int i = 1; i < 4; ++i) {
+    write_u32(*out, static_cast<std::uint32_t>(timers_[i].reload));
+    write_u32(*out, static_cast<std::uint32_t>(timers_[i].counter));
+    write_u16(*out, timers_[i].control);
+    write_u32(*out, timers_[i].accum);
+  }
+  for (const DmaChannel& channel : dma_) {
+    write_bool(*out, channel.active);
+  }
+
+  std::vector<std::uint32_t> patched(auto_patched_pcs_.begin(), auto_patched_pcs_.end());
+  std::sort(patched.begin(), patched.end());
+  write_u32(*out, static_cast<std::uint32_t>(patched.size()));
+  for (std::uint32_t pc : patched) {
+    write_u32(*out, pc);
+  }
+
+  std::vector<std::pair<std::uint32_t, WatchdogSample>> samples;
+  samples.reserve(watchdog_.size());
+  for (const auto& entry : watchdog_) {
+    samples.push_back(entry);
+  }
+  std::sort(samples.begin(), samples.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+  write_u32(*out, static_cast<std::uint32_t>(samples.size()));
+  for (const auto& entry : samples) {
+    write_u32(*out, entry.first);
+    write_u32(*out, static_cast<std::uint32_t>(entry.second.count));
+    write_u32(*out, entry.second.r0);
+    write_u32(*out, entry.second.r1);
+    write_u32(*out, entry.second.r2);
+    write_u32(*out, entry.second.r3);
+    write_u32(*out, entry.second.sp);
+    write_u32(*out, entry.second.lr);
+    write_u32(*out, entry.second.cpsr);
+    write_bool(*out, entry.second.thumb);
+  }
+
+  write_u32(*out, static_cast<std::uint32_t>(framebuffer_.size()));
+  for (std::uint32_t pixel : framebuffer_) {
+    write_u32(*out, pixel);
+  }
+}
+
+bool GbaCore::deserialize(const std::vector<std::uint8_t>& data,
+                          std::size_t& offset,
+                          std::string* error) {
+  using namespace gbemu::core::state_io;
+  auto fail = [error](const char* message) {
+    if (error) {
+      *error = message;
+    }
+    return false;
+  };
+  auto read_int = [&](int* out_value) -> bool {
+    std::uint32_t value = 0;
+    if (!read_u32(data, offset, value)) {
+      return false;
+    }
+    *out_value = static_cast<int>(value);
+    return true;
+  };
+
+  if (bus_.rom().empty() || bus_.bios().empty()) {
+    return fail("GBA ROM/BIOS must be loaded before state load");
+  }
+
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  if (!read_u32(data, offset, width) || !read_u32(data, offset, height)) {
+    return fail("Truncated GBA state");
+  }
+  if (width != static_cast<std::uint32_t>(width_) ||
+      height != static_cast<std::uint32_t>(height_)) {
+    return fail("GBA framebuffer size mismatch");
+  }
+  if (!read_u64(data, offset, frame_counter_) ||
+      !read_bool(data, offset, bios_handoff_done_) ||
+      !read_int(&bios_watchdog_cycles_) ||
+      !read_int(&line_cycles_) ||
+      !read_int(&vcount_) ||
+      !read_bool(data, offset, vblank_) ||
+      !read_bool(data, offset, hblank_) ||
+      !read_bool(data, offset, halted_) ||
+      !read_bool(data, offset, swi_wait_active_) ||
+      !read_u16(data, offset, swi_wait_mask_) ||
+      !read_int(&trace_steps_remaining_) ||
+      !read_bool(data, offset, trace_stop_on_rom_) ||
+      !read_bool(data, offset, trace_stop_notified_) ||
+      !read_bool(data, offset, trace_start_on_rom_) ||
+      !read_bool(data, offset, trace_start_notified_) ||
+      !read_int(&post_trace_remaining_) ||
+      !read_bool(data, offset, pc_watch_enabled_) ||
+      !read_u32(data, offset, pc_watch_start_) ||
+      !read_u32(data, offset, pc_watch_end_) ||
+      !read_int(&pc_watch_remaining_) ||
+      !read_u16(data, offset, keyinput_) ||
+      !read_bool(data, offset, gba_color_correct_) ||
+      !read_bool(data, offset, auto_handoff_enabled_) ||
+      !read_bool(data, offset, fastboot_enabled_) ||
+      !read_bool(data, offset, auto_patch_hang_) ||
+      !read_bool(data, offset, hle_swi_enabled_) ||
+      !read_bool(data, offset, trace_assert_) ||
+      !read_bool(data, offset, bypass_assert_) ||
+      !read_bool(data, offset, assert_bypass_patched_) ||
+      !read_int(&hle_swi_log_limit_) ||
+      !read_int(&hle_swi_log_count_) ||
+      !read_int(&auto_patch_threshold_) ||
+      !read_u32(data, offset, auto_patch_span_) ||
+      !read_u32(data, offset, auto_patch_start_) ||
+      !read_u32(data, offset, auto_patch_end_) ||
+      !read_u32(data, offset, loop_pc_) ||
+      !read_u32(data, offset, loop_target_) ||
+      !read_int(&loop_count_) ||
+      !read_bool(data, offset, loop_thumb_) ||
+      !read_int(&watchdog_steps_) ||
+      !read_int(&watchdog_counter_) ||
+      !read_string(data, offset, rom_game_code_)) {
+    return fail("Truncated GBA state");
+  }
+
+  if (!cpu_.deserialize(data, offset, error)) {
+    return false;
+  }
+  if (!bus_.deserialize(data, offset, error)) {
+    return false;
+  }
+
+  for (Timer& timer : timers_) {
+    if (!read_u32(data, offset, timer.reload) ||
+        !read_u32(data, offset, timer.counter) ||
+        !read_u16(data, offset, timer.control) ||
+        !read_u32(data, offset, timer.accum)) {
+      return fail("Truncated GBA state");
+    }
+  }
+  for (DmaChannel& channel : dma_) {
+    if (!read_bool(data, offset, channel.active)) {
+      return fail("Truncated GBA state");
+    }
+  }
+  for (int i = 0; i < 4; ++i) {
+    std::uint32_t addr = 0x04000100u + static_cast<std::uint32_t>(i) * 4u;
+    timers_[i].io_data_shadow = bus_.read16(addr);
+    timers_[i].io_control_shadow = bus_.read16(addr + 2u);
+  }
+
+  std::uint32_t patched_count = 0;
+  if (!read_u32(data, offset, patched_count)) {
+    return fail("Truncated GBA state");
+  }
+  auto_patched_pcs_.clear();
+  for (std::uint32_t i = 0; i < patched_count; ++i) {
+    std::uint32_t value = 0;
+    if (!read_u32(data, offset, value)) {
+      return fail("Truncated GBA state");
+    }
+    auto_patched_pcs_.insert(value);
+  }
+
+  std::uint32_t watchdog_count = 0;
+  if (!read_u32(data, offset, watchdog_count)) {
+    return fail("Truncated GBA state");
+  }
+  watchdog_.clear();
+  for (std::uint32_t i = 0; i < watchdog_count; ++i) {
+    std::uint32_t pc = 0;
+    WatchdogSample sample{};
+    std::uint32_t count = 0;
+    if (!read_u32(data, offset, pc) ||
+        !read_u32(data, offset, count) ||
+        !read_u32(data, offset, sample.r0) ||
+        !read_u32(data, offset, sample.r1) ||
+        !read_u32(data, offset, sample.r2) ||
+        !read_u32(data, offset, sample.r3) ||
+        !read_u32(data, offset, sample.sp) ||
+        !read_u32(data, offset, sample.lr) ||
+        !read_u32(data, offset, sample.cpsr) ||
+        !read_bool(data, offset, sample.thumb)) {
+      return fail("Truncated GBA state");
+    }
+    sample.count = static_cast<int>(count);
+    watchdog_[pc] = sample;
+  }
+
+  std::uint32_t fb_size = 0;
+  if (!read_u32(data, offset, fb_size)) {
+    return fail("Truncated GBA state");
+  }
+  std::size_t expected_fb = static_cast<std::size_t>(width_) * height_;
+  if (fb_size != expected_fb) {
+    return fail("GBA framebuffer size mismatch");
+  }
+  framebuffer_.assign(expected_fb, 0xFF000000u);
+  for (std::size_t i = 0; i < expected_fb; ++i) {
+    if (!read_u32(data, offset, framebuffer_[i])) {
+      return fail("Truncated GBA state");
+    }
+  }
+  ensure_render_buffers();
+  return true;
 }
 
 void GbaCore::step_frame() {
@@ -464,7 +815,7 @@ void GbaCore::render_placeholder() {
     return;
   }
   std::uint16_t mode = dispcnt & 0x0007;
-  if (mode == 0 || mode == 3 || mode == 4) {
+  if (mode <= 5) {
     return;
   }
   for (int y = 0; y < height_; ++y) {
@@ -537,6 +888,9 @@ void GbaCore::render_line(int y) {
         break;
       case 4:
         render_line_mode4(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_);
+        break;
+      case 5:
+        render_line_mode5(mosaiced_y, line_color_buf_, line_prio_buf_, line_layer_buf_);
         break;
       default:
         for (int x = 0; x < width_; ++x) {
@@ -717,7 +1071,7 @@ void GbaCore::render_line(int y) {
         do_blend = true;
       }
     }
-    if (top_semi && eff == 1 &&
+    if (top_semi && effects_enabled &&
         (target1 & layer_bit(kLayerObj)) && (target2 & layer_bit(second_layer))) {
       do_blend = true;
     }
@@ -729,9 +1083,12 @@ void GbaCore::render_line(int y) {
       std::uint8_t r2 = static_cast<std::uint8_t>((second_color >> 16) & 0xFF);
       std::uint8_t g2 = static_cast<std::uint8_t>((second_color >> 8) & 0xFF);
       std::uint8_t b2 = static_cast<std::uint8_t>(second_color & 0xFF);
-      std::uint8_t r = static_cast<std::uint8_t>((r1 * eva + r2 * evb) / 16);
-      std::uint8_t g = static_cast<std::uint8_t>((g1 * eva + g2 * evb) / 16);
-      std::uint8_t b = static_cast<std::uint8_t>((b1 * eva + b2 * evb) / 16);
+      int r = (r1 * eva + r2 * evb) / 16;
+      int g = (g1 * eva + g2 * evb) / 16;
+      int b = (b1 * eva + b2 * evb) / 16;
+      if (r > 255) r = 255;
+      if (g > 255) g = 255;
+      if (b > 255) b = 255;
       final_color = (0xFFu << 24) | (static_cast<std::uint32_t>(r) << 16) |
                     (static_cast<std::uint32_t>(g) << 8) | static_cast<std::uint32_t>(b);
     } else if (eff == 2 && (target1 & layer_bit(top_layer))) {
@@ -809,6 +1166,34 @@ void GbaCore::render_line_mode4(int y,
       std::uint16_t pal =
           bus_.read_palette16_fast(0x05000000u + static_cast<std::uint32_t>(index) * 2u);
       line_color[static_cast<std::size_t>(x)] = bgr555_to_argb(pal);
+      line_prio[static_cast<std::size_t>(x)] = bg2_prio;
+      line_layer[static_cast<std::size_t>(x)] = 2;
+    } else {
+      line_color[static_cast<std::size_t>(x)] = backdrop_color;
+      line_prio[static_cast<std::size_t>(x)] = 4;
+      line_layer[static_cast<std::size_t>(x)] = 5;
+    }
+  }
+}
+
+void GbaCore::render_line_mode5(int y,
+                                std::vector<std::uint32_t>& line_color,
+                                std::vector<int>& line_prio,
+                                std::vector<int>& line_layer) {
+  std::uint16_t dispcnt = bus_.read_io16(0x04000000);
+  bool bg2 = (dispcnt & 0x0400) != 0;
+  int bg2_prio = bus_.read_io16(0x0400000Cu) & 0x3;
+  std::uint16_t backdrop = bus_.read_palette16_fast(0x05000000u);
+  std::uint32_t backdrop_color = bgr555_to_argb(backdrop);
+  std::uint32_t page = (dispcnt & 0x0010) ? 0x0000A000u : 0x00000000u;
+  constexpr int kMode5Width = 160;
+  constexpr int kMode5Height = 128;
+  std::uint32_t base = 0x06000000u + page + static_cast<std::uint32_t>(y) * kMode5Width * 2u;
+
+  for (int x = 0; x < width_; ++x) {
+    if (bg2 && y < kMode5Height && x < kMode5Width) {
+      std::uint16_t pixel = bus_.read_vram16_fast(base + static_cast<std::uint32_t>(x) * 2u);
+      line_color[static_cast<std::size_t>(x)] = bgr555_to_argb(pixel);
       line_prio[static_cast<std::size_t>(x)] = bg2_prio;
       line_layer[static_cast<std::size_t>(x)] = 2;
     } else {
@@ -1203,28 +1588,74 @@ void GbaCore::render_line_sprites(int y,
 void GbaCore::sync_timers_from_io() {
   static constexpr std::uint32_t kBase = 0x04000100;
   for (int i = 0; i < 4; ++i) {
+    Timer& timer = timers_[i];
     std::uint32_t addr = kBase + static_cast<std::uint32_t>(i) * 4;
-    std::uint16_t reload = bus_.read16(addr);
+    std::uint16_t data = bus_.read16(addr);
     std::uint16_t control = bus_.read16(addr + 2);
-    if (reload != timers_[i].reload) {
-      timers_[i].reload = reload;
+    bool was_enabled = (timer.control & 0x0080) != 0;
+
+    if (data != timer.io_data_shadow) {
+      // TMxCNT_L is writable reload and readable current counter. The core
+      // updates readable counter each tick and tracks that mirror so external
+      // writes can be treated as reload updates.
+      timer.reload = data;
+      if (!was_enabled) {
+        timer.counter = data;
+      }
+      timer.io_data_shadow = data;
     }
-    if (control != timers_[i].control) {
-      bool was_enabled = (timers_[i].control & 0x0080) != 0;
+
+    if (control != timer.io_control_shadow) {
       bool now_enabled = (control & 0x0080) != 0;
-      timers_[i].control = control;
+      timer.control = control;
+      timer.io_control_shadow = control;
       if (!was_enabled && now_enabled) {
-        timers_[i].counter = timers_[i].reload;
-        timers_[i].accum = 0;
-        bus_.write16(addr, static_cast<std::uint16_t>(timers_[i].counter));
+        timer.counter = timer.reload;
+        timer.accum = 0;
+        std::uint16_t counter16 = static_cast<std::uint16_t>(timer.counter & 0xFFFFu);
+        bus_.write16(addr, counter16);
+        timer.io_data_shadow = counter16;
+      } else if (was_enabled && !now_enabled) {
+        timer.accum = 0;
       }
     }
   }
 }
 
 void GbaCore::step_timers(int cycles) {
+  if (cycles <= 0) {
+    return;
+  }
   static constexpr int prescale[4] = {1, 64, 256, 1024};
-  bool overflowed[4] = {false, false, false, false};
+  std::uint32_t overflow_count[4] = {0, 0, 0, 0};
+  auto step_counter = [](Timer* timer, std::uint32_t ticks) -> std::uint32_t {
+    if (!timer || ticks == 0) {
+      return 0;
+    }
+    std::uint32_t counter = timer->counter & 0xFFFFu;
+    std::uint32_t reload = timer->reload & 0xFFFFu;
+    std::uint32_t until_overflow = 0x10000u - counter;
+    if (ticks < until_overflow) {
+      timer->counter = counter + ticks;
+      return 0;
+    }
+
+    ticks -= until_overflow;
+    std::uint32_t overflows = 1;
+    counter = reload;
+    std::uint32_t period = 0x10000u - reload;
+    if (period == 0) {
+      period = 0x10000u;
+    }
+    if (ticks > 0) {
+      overflows += ticks / period;
+      ticks %= period;
+      counter = reload + ticks;
+    }
+    timer->counter = counter & 0xFFFFu;
+    return overflows;
+  };
+
   for (int i = 0; i < 4; ++i) {
     auto& timer = timers_[i];
     bool enabled = (timer.control & 0x0080) != 0;
@@ -1232,38 +1663,30 @@ void GbaCore::step_timers(int cycles) {
     if (!enabled) {
       continue;
     }
+
+    std::uint32_t ticks = 0;
     if (count_up) {
       if (i == 0) {
         continue;
       }
-      if (overflowed[i - 1]) {
-        ++timer.counter;
-        if (timer.counter >= 0x10000) {
-          timer.counter = timer.reload;
-          overflowed[i] = true;
-          if (timer.control & 0x0040) {
-            request_interrupt(3 + i);
-          }
-        }
-      }
+      ticks = overflow_count[i - 1];
     } else {
       int scale = prescale[timer.control & 0x3];
-      timer.accum += static_cast<std::uint32_t>(cycles);
-      while (timer.accum >= static_cast<std::uint32_t>(scale)) {
-        timer.accum -= static_cast<std::uint32_t>(scale);
-        ++timer.counter;
-        if (timer.counter >= 0x10000) {
-          timer.counter = timer.reload;
-          overflowed[i] = true;
-          if (timer.control & 0x0040) {
-            request_interrupt(3 + i);
-          }
-          break;
-        }
-      }
+      std::uint64_t total = static_cast<std::uint64_t>(timer.accum) +
+                            static_cast<std::uint64_t>(cycles);
+      ticks = static_cast<std::uint32_t>(total / static_cast<std::uint64_t>(scale));
+      timer.accum = static_cast<std::uint32_t>(total % static_cast<std::uint64_t>(scale));
     }
+
+    overflow_count[i] = step_counter(&timer, ticks);
+    if (overflow_count[i] > 0 && (timer.control & 0x0040)) {
+      request_interrupt(3 + i);
+    }
+
     std::uint32_t addr = 0x04000100u + static_cast<std::uint32_t>(i) * 4;
-    bus_.write16(addr, static_cast<std::uint16_t>(timer.counter));
+    std::uint16_t counter16 = static_cast<std::uint16_t>(timer.counter & 0xFFFFu);
+    bus_.write16(addr, counter16);
+    timer.io_data_shadow = counter16;
   }
 }
 
@@ -1518,7 +1941,8 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     imm = op_before & 0x00FFFFFFu;
   }
 
-  if (imm != 0x04 && imm != 0x05 && imm != 0x0B && imm != 0x0C) {
+  if (imm != 0x04 && imm != 0x05 && imm != 0x06 && imm != 0x07 && imm != 0x08 &&
+      imm != 0x0B && imm != 0x0C && imm != 0x0E && imm != 0x0F) {
     return false;
   }
 
@@ -1540,6 +1964,23 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     // IntrWait: R0 controls IF clear behavior, R1 is IRQ bit mask.
     clear_if = (cpu_.reg(0) != 0);
     wait_mask = static_cast<std::uint16_t>(cpu_.reg(1) & 0xFFFFu);
+  } else if (imm == 0x06 || imm == 0x07) {
+    std::int32_t num = static_cast<std::int32_t>(cpu_.reg(imm == 0x06 ? 0 : 1));
+    std::int32_t den = static_cast<std::int32_t>(cpu_.reg(imm == 0x06 ? 1 : 0));
+    std::int32_t quotient = 0;
+    std::int32_t remainder = 0;
+    std::uint32_t abs_quotient = 0;
+    if (!gba_signed_div(num, den, &quotient, &remainder, &abs_quotient)) {
+      // BIOS loops forever on divide-by-zero; defer to real BIOS path for fidelity.
+      return false;
+    }
+    cpu_.set_reg(0, static_cast<std::uint32_t>(quotient));
+    cpu_.set_reg(1, static_cast<std::uint32_t>(remainder));
+    cpu_.set_reg(3, abs_quotient);
+    hle_cycles = 52;
+  } else if (imm == 0x08) {
+    cpu_.set_reg(0, isqrt32(cpu_.reg(0)));
+    hle_cycles = 34;
   } else if (imm == 0x0B) {
     std::uint32_t src = cpu_.reg(0);
     std::uint32_t dst = cpu_.reg(1);
@@ -1606,6 +2047,72 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
       }
       hle_cycles = static_cast<int>(cost);
     }
+  } else if (imm == 0x0E) {
+    std::uint32_t src = cpu_.reg(0);
+    std::uint32_t dst = cpu_.reg(1);
+    std::uint32_t count = cpu_.reg(2);
+    for (std::uint32_t i = 0; i < count; ++i) {
+      std::uint32_t src_entry = src + i * 20u;
+      std::uint32_t dst_entry = dst + i * 16u;
+      std::int32_t tex_x = static_cast<std::int32_t>(bus_.read32(src_entry + 0u));
+      std::int32_t tex_y = static_cast<std::int32_t>(bus_.read32(src_entry + 4u));
+      std::int16_t scr_x = static_cast<std::int16_t>(bus_.read16(src_entry + 8u));
+      std::int16_t scr_y = static_cast<std::int16_t>(bus_.read16(src_entry + 10u));
+      std::int16_t sx = static_cast<std::int16_t>(bus_.read16(src_entry + 12u));
+      std::int16_t sy = static_cast<std::int16_t>(bus_.read16(src_entry + 14u));
+      std::uint16_t angle = bus_.read16(src_entry + 16u);
+
+      std::int16_t pa = 0;
+      std::int16_t pb = 0;
+      std::int16_t pc = 0;
+      std::int16_t pd = 0;
+      calc_affine_matrix(sx, sy, angle, &pa, &pb, &pc, &pd);
+      bus_.write16(dst_entry + 0u, static_cast<std::uint16_t>(pa));
+      bus_.write16(dst_entry + 2u, static_cast<std::uint16_t>(pb));
+      bus_.write16(dst_entry + 4u, static_cast<std::uint16_t>(pc));
+      bus_.write16(dst_entry + 6u, static_cast<std::uint16_t>(pd));
+
+      std::int64_t dx64 =
+          static_cast<std::int64_t>(tex_x) - static_cast<std::int64_t>(pa) * scr_x -
+          static_cast<std::int64_t>(pb) * scr_y;
+      std::int64_t dy64 =
+          static_cast<std::int64_t>(tex_y) - static_cast<std::int64_t>(pc) * scr_x -
+          static_cast<std::int64_t>(pd) * scr_y;
+      bus_.write32(dst_entry + 8u, static_cast<std::uint32_t>(static_cast<std::int32_t>(dx64)));
+      bus_.write32(dst_entry + 12u, static_cast<std::uint32_t>(static_cast<std::int32_t>(dy64)));
+    }
+    std::uint64_t cost = 24u + static_cast<std::uint64_t>(count) * 52u;
+    if (cost > 200000u) {
+      cost = 200000u;
+    }
+    hle_cycles = static_cast<int>(cost);
+  } else if (imm == 0x0F) {
+    std::uint32_t src = cpu_.reg(0);
+    std::uint32_t dst = cpu_.reg(1);
+    std::uint32_t count = cpu_.reg(2);
+    std::uint32_t offset = cpu_.reg(3);
+    for (std::uint32_t i = 0; i < count; ++i) {
+      std::uint32_t src_entry = src + i * 8u;
+      std::uint32_t dst_entry = dst + i * (offset * 4u);
+      std::int16_t sx = static_cast<std::int16_t>(bus_.read16(src_entry + 0u));
+      std::int16_t sy = static_cast<std::int16_t>(bus_.read16(src_entry + 2u));
+      std::uint16_t angle = bus_.read16(src_entry + 4u);
+
+      std::int16_t pa = 0;
+      std::int16_t pb = 0;
+      std::int16_t pc = 0;
+      std::int16_t pd = 0;
+      calc_affine_matrix(sx, sy, angle, &pa, &pb, &pc, &pd);
+      bus_.write16(dst_entry + offset * 0u, static_cast<std::uint16_t>(pa));
+      bus_.write16(dst_entry + offset * 1u, static_cast<std::uint16_t>(pb));
+      bus_.write16(dst_entry + offset * 2u, static_cast<std::uint16_t>(pc));
+      bus_.write16(dst_entry + offset * 3u, static_cast<std::uint16_t>(pd));
+    }
+    std::uint64_t cost = 20u + static_cast<std::uint64_t>(count) * 40u;
+    if (cost > 200000u) {
+      cost = 200000u;
+    }
+    hle_cycles = static_cast<int>(cost);
   }
 
   if (clear_if && wait_mask != 0) {
@@ -1837,6 +2344,10 @@ void GbaCore::run_dma(int timing) {
     std::uint16_t ctrl = bus_.read16(base + 10);
     bool enable = (ctrl & 0x8000) != 0;
     std::uint32_t start_timing = (ctrl >> 12) & 0x3;
+    if (ch == 0 && start_timing == 3) {
+      // DMA0 "special" timing is prohibited; map to immediate for compatibility.
+      start_timing = 0;
+    }
     bool repeat = (ctrl & 0x0200) != 0;
     if (!enable || static_cast<int>(start_timing) != timing) {
       if (timing == 0 && (!enable || start_timing != 0)) {
@@ -1849,15 +2360,28 @@ void GbaCore::run_dma(int timing) {
     }
     dma_[ch].active = true;
     bool word = (ctrl & 0x0400) != 0;
-    std::uint32_t length = count;
+    if (start_timing == 3 && (ch == 1 || ch == 2)) {
+      // FIFO sound DMA: fixed 32-bit units.
+      word = true;
+    }
+    std::uint32_t count_mask = (ch == 3) ? 0xFFFFu : 0x3FFFu;
+    std::uint32_t length = static_cast<std::uint32_t>(count) & count_mask;
+    if (start_timing == 3 && (ch == 1 || ch == 2)) {
+      length = 4;
+    }
     if (length == 0) {
       length = (ch == 3) ? 0x10000u : 0x4000u;
     }
     std::uint32_t src_ctrl = (ctrl >> 7) & 0x3;
     std::uint32_t dst_ctrl = (ctrl >> 5) & 0x3;
+    if (start_timing == 3 && (ch == 1 || ch == 2)) {
+      dst_ctrl = 2;
+      src_ctrl = 0;
+    }
     std::uint32_t step = word ? 4u : 2u;
-    std::uint32_t cur_src = src;
-    std::uint32_t cur_dst = dst;
+    std::uint32_t align_mask = ~(step - 1u);
+    std::uint32_t cur_src = src & align_mask;
+    std::uint32_t cur_dst = dst & align_mask;
     for (std::uint32_t i = 0; i < length; ++i) {
       if (word) {
         std::uint32_t value = bus_.read32(cur_src);
@@ -1881,7 +2405,7 @@ void GbaCore::run_dma(int timing) {
     std::uint32_t write_src = cur_src;
     std::uint32_t write_dst = cur_dst;
     if (dst_ctrl == 3 && repeat && timing != 0) {
-      write_dst = dst;
+      write_dst = dst & align_mask;
     }
     bus_.write32(base, write_src);
     bus_.write32(base + 4, write_dst);

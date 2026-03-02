@@ -191,4 +191,6 @@ core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: \
  /usr/include/c++/15/bits/basic_ios.tcc /usr/include/c++/15/ostream \
  /usr/include/c++/15/bits/ostream.h /usr/include/c++/15/bits/ostream.tcc \
  /usr/include/c++/15/bits/istream.tcc \
- /usr/include/c++/15/bits/sstream.tcc /usr/include/c++/15/iostream
+ /usr/include/c++/15/bits/sstream.tcc /usr/include/c++/15/iostream \
+ /home/jessie/Documents/GB-GBC-GBA-Emulator/core/state_io.h \
+ /usr/include/c++/15/cstring /usr/include/string.h /usr/include/strings.h

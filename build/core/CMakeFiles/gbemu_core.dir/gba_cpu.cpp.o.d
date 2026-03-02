@@ -124,13 +124,16 @@ core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: \
  /usr/include/c++/15/bits/memory_resource.h /usr/include/c++/15/cstddef \
  /usr/include/c++/15/bits/uses_allocator.h \
  /usr/include/c++/15/bits/uses_allocator_args.h /usr/include/c++/15/tuple \
- /usr/include/c++/15/bits/ranges_util.h \
- /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
- /usr/include/c++/15/vector /usr/include/c++/15/bits/stl_uninitialized.h \
+ /usr/include/c++/15/bits/ranges_util.h /usr/include/c++/15/vector \
+ /usr/include/c++/15/bits/stl_uninitialized.h \
  /usr/include/c++/15/bits/stl_vector.h \
  /usr/include/c++/15/bits/stl_bvector.h \
- /usr/include/c++/15/bits/vector.tcc /usr/include/c++/15/iomanip \
- /usr/include/c++/15/bits/ios_base.h /usr/include/c++/15/ext/atomicity.h \
+ /usr/include/c++/15/bits/vector.tcc \
+ /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
+ /home/jessie/Documents/GB-GBC-GBA-Emulator/core/state_io.h \
+ /usr/include/c++/15/cstring /usr/include/string.h /usr/include/strings.h \
+ /usr/include/c++/15/iomanip /usr/include/c++/15/bits/ios_base.h \
+ /usr/include/c++/15/ext/atomicity.h \
  /usr/include/x86_64-linux-gnu/c++/15/bits/gthr.h \
  /usr/include/x86_64-linux-gnu/c++/15/bits/gthr-default.h \
  /usr/include/pthread.h /usr/include/sched.h \

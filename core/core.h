@@ -31,6 +31,9 @@ class EmulatorCore {
   std::string cpu_fault_reason() const;
   std::uint16_t cpu_pc() const;
   std::uint8_t cpu_opcode() const;
+  Cpu::Registers gb_cpu_regs() const;
+  bool gb_cpu_halted() const;
+  std::string take_serial_output();
   void set_cpu_trace_enabled(bool enabled);
   void set_gba_trace(int steps, bool trace_io);
   void set_gba_trace_after_rom(int steps, bool trace_io);

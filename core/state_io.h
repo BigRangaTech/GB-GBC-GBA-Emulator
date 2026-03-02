@@ -51,6 +51,11 @@ inline void write_bytes_fixed(std::vector<std::uint8_t>& out, const std::uint8_t
   out.insert(out.end(), data, data + size);
 }
 
+inline void write_string(std::vector<std::uint8_t>& out, const std::string& value) {
+  write_u32(out, static_cast<std::uint32_t>(value.size()));
+  out.insert(out.end(), value.begin(), value.end());
+}
+
 inline bool read_u8(const std::vector<std::uint8_t>& data, std::size_t& offset, std::uint8_t& out) {
   if (offset + 1 > data.size()) return false;
   out = data[offset++];
@@ -119,6 +124,15 @@ inline bool read_bytes_fixed(const std::vector<std::uint8_t>& data, std::size_t&
                              std::uint8_t* out, std::size_t size) {
   if (offset + size > data.size()) return false;
   std::memcpy(out, data.data() + offset, size);
+  offset += size;
+  return true;
+}
+
+inline bool read_string(const std::vector<std::uint8_t>& data, std::size_t& offset, std::string& out) {
+  std::uint32_t size = 0;
+  if (!read_u32(data, offset, size)) return false;
+  if (offset + size > data.size()) return false;
+  out.assign(reinterpret_cast<const char*>(data.data() + offset), size);
   offset += size;
   return true;
 }

@@ -121,6 +121,27 @@ std::uint8_t EmulatorCore::cpu_opcode() const {
   return cpu_.last_opcode();
 }
 
+Cpu::Registers EmulatorCore::gb_cpu_regs() const {
+  if (system_ == System::GBA) {
+    return {};
+  }
+  return cpu_.regs();
+}
+
+bool EmulatorCore::gb_cpu_halted() const {
+  if (system_ == System::GBA) {
+    return false;
+  }
+  return cpu_.halted();
+}
+
+std::string EmulatorCore::take_serial_output() {
+  if (system_ == System::GBA) {
+    return "";
+  }
+  return mmu_.take_serial_output();
+}
+
 void EmulatorCore::set_cpu_trace_enabled(bool enabled) {
   if (system_ == System::GBA) {
     return;
@@ -316,14 +337,14 @@ bool EmulatorCore::boot_rom_enabled() const {
 
 bool EmulatorCore::has_battery() const {
   if (system_ == System::GBA) {
-    return false;
+    return gba_.has_battery();
   }
   return mmu_.has_battery();
 }
 
 bool EmulatorCore::has_ram() const {
   if (system_ == System::GBA) {
-    return false;
+    return gba_.has_ram();
   }
   return mmu_.has_ram();
 }
@@ -337,13 +358,14 @@ bool EmulatorCore::has_rtc() const {
 
 std::vector<std::uint8_t> EmulatorCore::ram_data() const {
   if (system_ == System::GBA) {
-    return {};
+    return gba_.ram_data();
   }
   return mmu_.ram_data();
 }
 
 void EmulatorCore::load_ram_data(const std::vector<std::uint8_t>& data) {
   if (system_ == System::GBA) {
+    gba_.load_ram_data(data);
     return;
   }
   mmu_.load_ram_data(data);
@@ -364,9 +386,6 @@ void EmulatorCore::load_rtc_data(const std::vector<std::uint8_t>& data) {
 }
 
 bool EmulatorCore::save_state(std::vector<std::uint8_t>* out) const {
-  if (system_ == System::GBA) {
-    return false;
-  }
   if (!out) {
     return false;
   }
@@ -376,8 +395,12 @@ bool EmulatorCore::save_state(std::vector<std::uint8_t>* out) const {
   out->push_back('B');
   out->push_back('S');
   out->push_back('T');
-  write_u16(*out, 4);
+  write_u16(*out, 5);
   write_u8(*out, static_cast<std::uint8_t>(system_));
+  if (system_ == System::GBA) {
+    gba_.serialize(out);
+    return true;
+  }
   cpu_.serialize(out);
   mmu_.serialize(out);
   ppu_.serialize(out);
@@ -386,12 +409,6 @@ bool EmulatorCore::save_state(std::vector<std::uint8_t>* out) const {
 }
 
 bool EmulatorCore::load_state(const std::vector<std::uint8_t>& data, std::string* error) {
-  if (system_ == System::GBA) {
-    if (error) {
-      *error = "GBA state not implemented";
-    }
-    return false;
-  }
   using namespace gbemu::core::state_io;
   if (data.size() < 6) {
     if (error) *error = "State data too small";
@@ -404,7 +421,7 @@ bool EmulatorCore::load_state(const std::vector<std::uint8_t>& data, std::string
   std::size_t offset = 4;
   std::uint16_t version = 0;
   if (!read_u16(data, offset, version)) return false;
-  if (version != 4) {
+  if (version != 4 && version != 5) {
     if (error) *error = "Unsupported state version";
     return false;
   }
@@ -413,6 +430,13 @@ bool EmulatorCore::load_state(const std::vector<std::uint8_t>& data, std::string
   if (sys != static_cast<std::uint8_t>(system_)) {
     if (error) *error = "State system mismatch";
     return false;
+  }
+  if (system_ == System::GBA) {
+    if (version < 5) {
+      if (error) *error = "GBA states require version 5+";
+      return false;
+    }
+    return gba_.deserialize(data, offset, error);
   }
   if (!cpu_.deserialize(data, offset, error)) return false;
   if (!mmu_.deserialize(data, offset, error)) return false;

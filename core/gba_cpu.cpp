@@ -1,6 +1,7 @@
 #include "gba_cpu.h"
 
 #include "gba_bus.h"
+#include "state_io.h"
 
 #include <bit>
 #include <iomanip>
@@ -261,6 +262,131 @@ void GbaCpu::set_log_swi(int limit) {
   }
   log_swi_limit_ = limit;
   log_swi_count_ = 0;
+}
+
+void GbaCpu::serialize(std::vector<std::uint8_t>* out) const {
+  if (!out) {
+    return;
+  }
+  using namespace gbemu::core::state_io;
+  for (std::uint32_t reg : regs_.r) {
+    write_u32(*out, reg);
+  }
+  write_u32(*out, regs_.cpsr);
+  write_bool(*out, thumb_);
+  write_bool(*out, faulted_);
+  write_string(*out, fault_reason_);
+  write_u32(*out, static_cast<std::uint32_t>(unimplemented_count_));
+  write_u32(*out, spsr_);
+  for (std::uint32_t value : shared_r8_12_) {
+    write_u32(*out, value);
+  }
+  for (std::uint32_t value : fiq_r8_12_) {
+    write_u32(*out, value);
+  }
+  write_u32(*out, banked_r13_usr_);
+  write_u32(*out, banked_r14_usr_);
+  write_u32(*out, banked_r13_fiq_);
+  write_u32(*out, banked_r14_fiq_);
+  write_u32(*out, banked_r13_irq_);
+  write_u32(*out, banked_r14_irq_);
+  write_u32(*out, banked_r13_svc_);
+  write_u32(*out, banked_r14_svc_);
+  write_u32(*out, banked_r13_abt_);
+  write_u32(*out, banked_r14_abt_);
+  write_u32(*out, banked_r13_und_);
+  write_u32(*out, banked_r14_und_);
+  write_u32(*out, spsr_fiq_);
+  write_u32(*out, spsr_irq_);
+  write_u32(*out, spsr_svc_);
+  write_u32(*out, spsr_abt_);
+  write_u32(*out, spsr_und_);
+  write_u32(*out, static_cast<std::uint32_t>(log_unimplemented_limit_));
+  write_u32(*out, static_cast<std::uint32_t>(log_unimplemented_count_));
+  write_u32(*out, static_cast<std::uint32_t>(log_swi_limit_));
+  write_u32(*out, static_cast<std::uint32_t>(log_swi_count_));
+}
+
+bool GbaCpu::deserialize(const std::vector<std::uint8_t>& data,
+                         std::size_t& offset,
+                         std::string* error) {
+  using namespace gbemu::core::state_io;
+  std::uint32_t value = 0;
+  for (std::uint32_t& reg : regs_.r) {
+    if (!read_u32(data, offset, reg)) {
+      if (error) *error = "Truncated GBA CPU state";
+      return false;
+    }
+  }
+  if (!read_u32(data, offset, regs_.cpsr) ||
+      !read_bool(data, offset, thumb_) ||
+      !read_bool(data, offset, faulted_) ||
+      !read_string(data, offset, fault_reason_)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  if (!read_u32(data, offset, value)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  unimplemented_count_ = static_cast<int>(value);
+  if (!read_u32(data, offset, spsr_)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  for (std::uint32_t& entry : shared_r8_12_) {
+    if (!read_u32(data, offset, entry)) {
+      if (error) *error = "Truncated GBA CPU state";
+      return false;
+    }
+  }
+  for (std::uint32_t& entry : fiq_r8_12_) {
+    if (!read_u32(data, offset, entry)) {
+      if (error) *error = "Truncated GBA CPU state";
+      return false;
+    }
+  }
+  if (!read_u32(data, offset, banked_r13_usr_) ||
+      !read_u32(data, offset, banked_r14_usr_) ||
+      !read_u32(data, offset, banked_r13_fiq_) ||
+      !read_u32(data, offset, banked_r14_fiq_) ||
+      !read_u32(data, offset, banked_r13_irq_) ||
+      !read_u32(data, offset, banked_r14_irq_) ||
+      !read_u32(data, offset, banked_r13_svc_) ||
+      !read_u32(data, offset, banked_r14_svc_) ||
+      !read_u32(data, offset, banked_r13_abt_) ||
+      !read_u32(data, offset, banked_r14_abt_) ||
+      !read_u32(data, offset, banked_r13_und_) ||
+      !read_u32(data, offset, banked_r14_und_) ||
+      !read_u32(data, offset, spsr_fiq_) ||
+      !read_u32(data, offset, spsr_irq_) ||
+      !read_u32(data, offset, spsr_svc_) ||
+      !read_u32(data, offset, spsr_abt_) ||
+      !read_u32(data, offset, spsr_und_)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  if (!read_u32(data, offset, value)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  log_unimplemented_limit_ = static_cast<int>(value);
+  if (!read_u32(data, offset, value)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  log_unimplemented_count_ = static_cast<int>(value);
+  if (!read_u32(data, offset, value)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  log_swi_limit_ = static_cast<int>(value);
+  if (!read_u32(data, offset, value)) {
+    if (error) *error = "Truncated GBA CPU state";
+    return false;
+  }
+  log_swi_count_ = static_cast<int>(value);
+  return true;
 }
 
 void GbaCpu::log_unimplemented(bool thumb, std::uint32_t pc, std::uint32_t op) {
@@ -1066,6 +1192,58 @@ int GbaCpu::step(GbaBus* bus) {
     return 4;
   }
 
+  if ((op & 0x0F8000F0u) == 0x00800090u) {
+    bool signed_mul = (op & (1u << 22)) != 0;
+    bool accumulate = (op & (1u << 21)) != 0;
+    bool s = (op & (1u << 20)) != 0;
+    std::uint32_t rd_hi = (op >> 16) & 0xF;
+    std::uint32_t rd_lo = (op >> 12) & 0xF;
+    std::uint32_t rs = (op >> 8) & 0xF;
+    std::uint32_t rm = op & 0xF;
+
+    std::uint64_t result = 0;
+    if (signed_mul) {
+      std::int64_t product = static_cast<std::int64_t>(static_cast<std::int32_t>(regs_.r[rm])) *
+                             static_cast<std::int64_t>(static_cast<std::int32_t>(regs_.r[rs]));
+      result = static_cast<std::uint64_t>(product);
+    } else {
+      result = static_cast<std::uint64_t>(regs_.r[rm]) * static_cast<std::uint64_t>(regs_.r[rs]);
+    }
+    if (accumulate) {
+      std::uint64_t acc = (static_cast<std::uint64_t>(regs_.r[rd_hi]) << 32) | regs_.r[rd_lo];
+      result += acc;
+    }
+
+    regs_.r[rd_lo] = static_cast<std::uint32_t>(result & 0xFFFFFFFFu);
+    regs_.r[rd_hi] = static_cast<std::uint32_t>(result >> 32);
+    if (s) {
+      set_flag_mask(1u << 31, (result & (1ull << 63)) != 0);
+      set_flag_mask(1u << 30, result == 0);
+    }
+    return 5;
+  }
+
+  if ((op & 0x0FB00FF0u) == 0x01000090u) {
+    bool byte = (op & (1u << 22)) != 0;
+    std::uint32_t rn = (op >> 16) & 0xF;
+    std::uint32_t rd = (op >> 12) & 0xF;
+    std::uint32_t rm = op & 0xF;
+    std::uint32_t addr = operand_reg(static_cast<int>(rn));
+    std::uint32_t old_value = byte ? bus->read8(addr) : bus->read32(addr);
+    std::uint32_t new_value = operand_reg(static_cast<int>(rm));
+    if (byte) {
+      bus->write8(addr, static_cast<std::uint8_t>(new_value & 0xFF));
+    } else {
+      bus->write32(addr, new_value);
+    }
+    if (rd == 15) {
+      regs_.r[15] = old_value & ~3u;
+    } else {
+      regs_.r[rd] = old_value;
+    }
+    return 4;
+  }
+
   // Halfword/signed transfer (LDRH/STRH/LDRSB/LDRSH) accepts both
   // register-offset (I=0) and immediate-offset (I=1) encodings.
   if ((op & 0x0E000090u) == 0x00000090u && (op & 0x00000060u) != 0) {
@@ -1204,6 +1382,7 @@ int GbaCpu::step(GbaBus* bus) {
       std::uint32_t shift_type = (op >> 5) & 0x3;
       std::uint32_t shift = (op >> 7) & 0x1F;
       std::uint32_t offset = operand_reg(static_cast<int>(rm));
+      bool carry_in = get_flag_mask(1u << 29) != 0;
       switch (shift_type) {
         case 0:
           offset = offset << shift;
@@ -1220,7 +1399,7 @@ int GbaCpu::step(GbaBus* bus) {
           break;
         case 3:
           if (shift == 0) {
-            offset = (offset >> 1) | (offset << 31);
+            offset = (carry_in ? 0x80000000u : 0u) | (offset >> 1);
           } else {
             offset = (offset >> shift) | (offset << (32 - shift));
           }

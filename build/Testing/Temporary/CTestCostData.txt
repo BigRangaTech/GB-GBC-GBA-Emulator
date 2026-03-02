@@ -1,2 +1,2 @@
-gbemu_tests 6 0.000950299
+gbemu_tests 27 0.0209684
 ---

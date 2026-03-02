@@ -21,10 +21,12 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/asm-generic/int-ll64.h \
   /usr/include/asm-generic/posix_types.h \
   /usr/include/asm-generic/types.h \
+  /usr/include/c++/15/algorithm \
   /usr/include/c++/15/array \
   /usr/include/c++/15/backward/auto_ptr.h \
   /usr/include/c++/15/backward/binders.h \
   /usr/include/c++/15/bit \
+  /usr/include/c++/15/bits/algorithmfwd.h \
   /usr/include/c++/15/bits/align.h \
   /usr/include/c++/15/bits/alloc_traits.h \
   /usr/include/c++/15/bits/allocated_ptr.h \
@@ -87,6 +89,7 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/bits/ptr_traits.h \
   /usr/include/c++/15/bits/quoted_string.h \
   /usr/include/c++/15/bits/range_access.h \
+  /usr/include/c++/15/bits/ranges_algo.h \
   /usr/include/c++/15/bits/ranges_algobase.h \
   /usr/include/c++/15/bits/ranges_base.h \
   /usr/include/c++/15/bits/ranges_cmp.h \
@@ -100,22 +103,28 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/bits/sstream.tcc \
   /usr/include/c++/15/bits/std_abs.h \
   /usr/include/c++/15/bits/std_mutex.h \
+  /usr/include/c++/15/bits/stl_algo.h \
   /usr/include/c++/15/bits/stl_algobase.h \
   /usr/include/c++/15/bits/stl_bvector.h \
   /usr/include/c++/15/bits/stl_construct.h \
   /usr/include/c++/15/bits/stl_function.h \
+  /usr/include/c++/15/bits/stl_heap.h \
   /usr/include/c++/15/bits/stl_iterator.h \
   /usr/include/c++/15/bits/stl_iterator_base_funcs.h \
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
+  /usr/include/c++/15/bits/stl_map.h \
+  /usr/include/c++/15/bits/stl_multimap.h \
   /usr/include/c++/15/bits/stl_pair.h \
   /usr/include/c++/15/bits/stl_raw_storage_iter.h \
   /usr/include/c++/15/bits/stl_tempbuf.h \
+  /usr/include/c++/15/bits/stl_tree.h \
   /usr/include/c++/15/bits/stl_uninitialized.h \
   /usr/include/c++/15/bits/stl_vector.h \
   /usr/include/c++/15/bits/streambuf.tcc \
   /usr/include/c++/15/bits/streambuf_iterator.h \
   /usr/include/c++/15/bits/string_view.tcc \
   /usr/include/c++/15/bits/stringfwd.h \
+  /usr/include/c++/15/bits/uniform_int_dist.h \
   /usr/include/c++/15/bits/unique_ptr.h \
   /usr/include/c++/15/bits/unordered_map.h \
   /usr/include/c++/15/bits/unordered_set.h \
@@ -158,12 +167,14 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/istream \
   /usr/include/c++/15/limits \
   /usr/include/c++/15/locale \
+  /usr/include/c++/15/map \
   /usr/include/c++/15/memory \
   /usr/include/c++/15/new \
   /usr/include/c++/15/numbers \
   /usr/include/c++/15/optional \
   /usr/include/c++/15/ostream \
   /usr/include/c++/15/pstl/execution_defs.h \
+  /usr/include/c++/15/pstl/glue_algorithm_defs.h \
   /usr/include/c++/15/pstl/glue_memory_defs.h \
   /usr/include/c++/15/pstl/pstl_config.h \
   /usr/include/c++/15/ratio \
@@ -430,29 +441,23 @@ common/libgbemu_common.a:
 
 /usr/include/x86_64-linux-gnu/bits/types/clock_t.h:
 
-/usr/include/c++/15/clocale:
-
-/usr/include/c++/15/bits/stl_algobase.h:
-
-/usr/include/c++/15/climits:
-
-/usr/include/c++/15/cctype:
-
-/usr/include/c++/15/bits/ranges_uninitialized.h:
-
-/usr/include/c++/15/cerrno:
-
-/usr/lib/x86_64-linux-gnu/libgcc_s.so.1:
-
-/usr/include/linux/close_range.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu_backend.h:
-
-/usr/include/c++/15/bits/unique_ptr.h:
-
-/usr/include/c++/15/bits/streambuf_iterator.h:
+/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h:
+
+/usr/include/x86_64-linux-gnu/bits/types/__fpos_t.h:
+
+/usr/include/x86_64-linux-gnu/bits/types/__FILE.h:
+
+/usr/include/x86_64-linux-gnu/bits/types/FILE.h:
+
+/usr/include/x86_64-linux-gnu/bits/time64.h:
+
+/usr/include/c++/15/bits/uniform_int_dist.h:
+
+/usr/include/features-time64.h:
+
+/usr/include/c++/15/bits/streambuf_iterator.h:
 
 /usr/include/c++/15/bits/fs_ops.h:
 
@@ -460,15 +465,29 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/bits/stl_tempbuf.h:
 
-/usr/include/c++/15/bits/enable_special_members.h:
+/usr/include/c++/15/bits/ranges_uninitialized.h:
+
+/usr/include/c++/15/bits/unique_ptr.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/ppu_backend.h:
+
+/usr/include/c++/15/cctype:
+
+/usr/include/stdio.h:
 
 /usr/include/c++/15/ext/atomicity.h:
 
 /usr/include/limits.h:
 
+/usr/include/c++/15/bits/stl_algobase.h:
+
+/usr/include/c++/15/clocale:
+
 /usr/include/c++/15/bits/sstream.tcc:
 
 /usr/include/c++/15/bits/stl_uninitialized.h:
+
+/usr/include/c++/15/bits/stl_multimap.h:
 
 /usr/include/c++/15/bits/shared_ptr_base.h:
 
@@ -526,6 +545,8 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/bits/ostream_insert.h:
 
+/usr/include/c++/15/bits/ranges_algo.h:
+
 /usr/include/x86_64-linux-gnu/bits/errno.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/atomic_word.h:
@@ -544,6 +565,8 @@ common/libgbemu_common.a:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/time_members.h:
 
+/usr/include/c++/15/algorithm:
+
 /usr/include/c++/15/bits/hash_bytes.h:
 
 /usr/include/c++/15/bits/fs_path.h:
@@ -555,8 +578,6 @@ common/libgbemu_common.a:
 /usr/include/asm-generic/int-ll64.h:
 
 /usr/include/c++/15/bits/iterator_concepts.h:
-
-/usr/include/c++/15/bits/string_view.tcc:
 
 /usr/include/c++/15/bits/istream.tcc:
 
@@ -600,19 +621,9 @@ common/libgbemu_common.a:
 
 /usr/include/syscall.h:
 
-/usr/include/c++/15/bits/stl_iterator_base_types.h:
-
-/usr/include/stdc-predef.h:
-
-/usr/include/c++/15/bits/concept_check.h:
-
 /usr/include/linux/limits.h:
 
 /usr/include/x86_64-linux-gnu/bits/posix2_lim.h:
-
-/usr/include/c++/15/bits/atomic_base.h:
-
-/usr/include/c++/15/bits/chrono.h:
 
 /usr/include/c++/15/bits/quoted_string.h:
 
@@ -625,8 +636,6 @@ common/libgbemu_common.a:
 /usr/include/c++/15/exception:
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h:
-
-/usr/include/x86_64-linux-gnu/bits/types/__FILE.h:
 
 /usr/include/c++/15/bits/align.h:
 
@@ -643,10 +652,6 @@ common/libgbemu_common.a:
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/mmu.h:
 
 /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:
-
-/usr/include/c++/15/bits/exception_defines.h:
-
-/usr/include/c++/15/backward/auto_ptr.h:
 
 /usr/include/c++/15/bits/ostream.h:
 
@@ -670,17 +675,17 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/unordered_set:
 
+/usr/include/c++/15/bits/algorithmfwd.h:
+
 /usr/include/x86_64-linux-gnu/bits/types/wint_t.h:
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/cpu.h:
 
 /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.h:
 
+/usr/include/c++/15/pstl/glue_algorithm_defs.h:
+
 /usr/include/c++/15/bits/charconv.h:
-
-/usr/include/c++/15/bits/version.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h:
 
 /usr/include/c++/15/bits/stl_iterator.h:
 
@@ -708,6 +713,16 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/ext/string_conversions.h:
 
+/usr/include/c++/15/bits/stl_iterator_base_types.h:
+
+/usr/include/stdc-predef.h:
+
+/usr/include/c++/15/bits/string_view.tcc:
+
+/usr/include/c++/15/bits/atomic_base.h:
+
+/usr/include/c++/15/bits/chrono.h:
+
 /usr/include/linux/sched/types.h:
 
 /usr/include/c++/15/bits/nested_exception.h:
@@ -722,12 +737,6 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/bits/codecvt.h:
 
-/usr/include/x86_64-linux-gnu/c++/15/bits/cpu_defines.h:
-
-/usr/include/x86_64-linux-gnu/bits/timesize.h:
-
-/usr/include/c++/15/bits/uses_allocator_args.h:
-
 /usr/include/c++/15/bits/cpp_type_traits.h:
 
 /usr/include/c++/15/bits/basic_string.h:
@@ -736,17 +745,59 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/backward/binders.h:
 
+/usr/include/c++/15/bits/concept_check.h:
+
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h:
+
+/usr/include/c++/15/bits/version.h:
+
+/usr/include/c++/15/bits/stl_algo.h:
+
 /usr/include/c++/15/bits/shared_ptr_atomic.h:
+
+/usr/include/c++/15/compare:
+
+/usr/include/c++/15/bits/cxxabi_forced.h:
+
+/usr/include/c++/15/map:
+
+/usr/include/c++/15/bits/enable_special_members.h:
+
+/usr/include/c++/15/bits/stl_tree.h:
+
+/usr/include/c++/15/bits/exception_defines.h:
+
+/usr/include/c++/15/backward/auto_ptr.h:
+
+/usr/include/c++/15/bits/stl_heap.h:
 
 /usr/include/c++/15/initializer_list:
 
-/usr/include/c++/15/bits/allocator.h:
-
 /usr/include/asm-generic/posix_types.h:
+
+/usr/include/c++/15/bits/allocator.h:
 
 /usr/include/c++/15/bit:
 
 /usr/include/pthread.h:
+
+/usr/include/c++/15/bits/locale_facets_nonio.tcc:
+
+/usr/include/c++/15/bits/invoke.h:
+
+/usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h:
+
+/usr/include/c++/15/bits/stl_function.h:
+
+/usr/include/c++/15/bits/fs_dir.h:
+
+/usr/include/wctype.h:
+
+/usr/include/sched.h:
+
+/usr/include/c++/15/bits/memoryfwd.h:
+
+/usr/include/c++/15/bits/fstream.tcc:
 
 /usr/include/x86_64-linux-gnu/bits/uio_lim.h:
 
@@ -766,33 +817,33 @@ core/libgbemu_core.a:
 
 /usr/include/c++/15/bits/hashtable.h:
 
-/usr/include/c++/15/bits/locale_facets_nonio.tcc:
+/usr/include/x86_64-linux-gnu/c++/15/bits/cpu_defines.h:
 
-/usr/include/c++/15/bits/stl_function.h:
+/usr/include/x86_64-linux-gnu/bits/timesize.h:
 
-/usr/include/c++/15/bits/fs_dir.h:
+/usr/include/c++/15/bits/uses_allocator_args.h:
 
-/usr/include/wctype.h:
-
-/usr/include/sched.h:
-
-/usr/include/c++/15/bits/memoryfwd.h:
-
-/usr/include/c++/15/bits/fstream.tcc:
-
-/usr/include/c++/15/bits/invoke.h:
-
-/usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h:
-
-/usr/include/c++/15/bits/cxxabi_forced.h:
-
-/usr/include/c++/15/compare:
-
-/usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
+/usr/include/x86_64-linux-gnu/bits/types.h:
 
 /usr/include/c++/15/bits/utility.h:
 
-/usr/include/x86_64-linux-gnu/bits/types.h:
+/usr/lib/x86_64-linux-gnu/libgcc_s.so.1:
+
+/usr/include/linux/close_range.h:
+
+/usr/include/c++/15/cerrno:
+
+/usr/include/c++/15/climits:
+
+/usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h:
+
+/usr/include/c++/15/codecvt:
+
+/usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h:
+
+/usr/include/c++/15/concepts:
+
+/usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
 
 /usr/include/c++/15/cstdint:
 
@@ -835,10 +886,6 @@ core/libgbemu_core.a:
 /usr/include/c++/15/iostream:
 
 /usr/include/c++/15/istream:
-
-/usr/include/c++/15/concepts:
-
-/usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h:
 
 /usr/include/c++/15/locale:
 
@@ -892,8 +939,6 @@ core/libgbemu_core.a:
 
 /usr/include/errno.h:
 
-/usr/include/features-time64.h:
-
 /usr/include/features.h:
 
 /usr/include/libintl.h:
@@ -901,6 +946,8 @@ core/libgbemu_core.a:
 /usr/include/x86_64-linux-gnu/bits/endianness.h:
 
 /usr/include/linux/posix_types.h:
+
+/usr/include/c++/15/bits/stl_map.h:
 
 /usr/include/c++/15/bits/locale_classes.h:
 
@@ -913,8 +960,6 @@ core/libgbemu_core.a:
 /usr/include/x86_64-linux-gnu/asm/bitsperlong.h:
 
 /usr/include/x86_64-linux-gnu/bits/pthreadtypes-arch.h:
-
-/usr/include/stdio.h:
 
 /lib/x86_64-linux-gnu/libmvec.so.1:
 
@@ -964,17 +1009,11 @@ core/libgbemu_core.a:
 
 /usr/include/x86_64-linux-gnu/bits/setjmp.h:
 
-/usr/include/c++/15/codecvt:
-
-/usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h:
-
 /usr/include/x86_64-linux-gnu/bits/stdint-least.h:
 
 /usr/include/x86_64-linux-gnu/bits/timex.h:
 
 /usr/include/x86_64-linux-gnu/bits/stdio_lim.h:
-
-/usr/include/x86_64-linux-gnu/bits/types/FILE.h:
 
 /usr/include/x86_64-linux-gnu/bits/struct_mutex.h:
 
@@ -987,9 +1026,3 @@ core/libgbemu_core.a:
 /usr/include/x86_64-linux-gnu/bits/syscall.h:
 
 /usr/include/x86_64-linux-gnu/bits/thread-shared-types.h:
-
-/usr/include/x86_64-linux-gnu/bits/time64.h:
-
-/usr/include/x86_64-linux-gnu/bits/types/__fpos_t.h:
-
-/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:

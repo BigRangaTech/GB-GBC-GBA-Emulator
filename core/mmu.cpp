@@ -143,6 +143,7 @@ bool Mmu::load(System system,
   obpi_ = 0;
   obpi_inc_ = false;
   joypad_state_ = 0xFF;
+  serial_output_.clear();
   rtc_offset_seconds_ = 0;
   rtc_base_time_ = static_cast<std::int64_t>(std::time(nullptr));
   rtc_halt_ = false;
@@ -566,6 +567,19 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
           }
         }
         break;
+      case 0xFF01:
+        io_[0x01] = value;
+        break;
+      case 0xFF02:
+        io_[0x02] = value;
+        // External-clock serial transfer completion shortcut. This allows
+        // conformance ROMs (blargg/mooneye) to report pass/fail text/signals.
+        if ((value & 0x81u) == 0x81u) {
+          serial_output_.push_back(static_cast<char>(io_[0x01]));
+          io_[0x02] = static_cast<std::uint8_t>(value & ~0x80u);
+          request_interrupt(3);
+        }
+        break;
       case 0xFF46: {
         io_[0x46] = value;
         std::uint16_t source = static_cast<std::uint16_t>(value) << 8;
@@ -752,6 +766,12 @@ std::uint8_t Mmu::obj_palette_byte(int index) const {
 
 void Mmu::set_joypad_state(std::uint8_t state) {
   joypad_state_ = state;
+}
+
+std::string Mmu::take_serial_output() {
+  std::string out = serial_output_;
+  serial_output_.clear();
+  return out;
 }
 
 bool Mmu::handle_stop() {

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace gbemu::core {
 
@@ -31,6 +32,8 @@ class GbaCpu {
   void set_banked_sp(std::uint32_t mode, std::uint32_t value);
   void set_log_unimplemented(int limit);
   void set_log_swi(int limit);
+  void serialize(std::vector<std::uint8_t>* out) const;
+  bool deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset, std::string* error);
   int unimplemented_count() const { return unimplemented_count_; }
   void clear_unimplemented_count() { unimplemented_count_ = 0; }
 

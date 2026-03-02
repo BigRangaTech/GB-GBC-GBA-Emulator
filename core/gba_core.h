@@ -27,6 +27,10 @@ class GbaCore {
   bool cpu_faulted() const { return cpu_.faulted(); }
   const std::string& cpu_fault_reason() const { return cpu_.fault_reason(); }
   std::uint32_t cpu_pc() const { return cpu_.pc(); }
+  bool has_battery() const { return bus_.has_battery(); }
+  bool has_ram() const { return bus_.has_ram(); }
+  std::vector<std::uint8_t> ram_data() const { return bus_.save_data(); }
+  void load_ram_data(const std::vector<std::uint8_t>& data) { bus_.load_save_data(data); }
   void set_trace(int steps, bool trace_io);
   void set_trace_after_rom(int steps, bool trace_io);
   void set_log_unimplemented(int limit) { cpu_.set_log_unimplemented(limit); }
@@ -55,6 +59,25 @@ class GbaCore {
   void set_hle_swi(bool enabled) { hle_swi_enabled_ = enabled; }
   void set_trace_assert(bool enabled) { trace_assert_ = enabled; }
   void set_bypass_assert(bool enabled) { bypass_assert_ = enabled; }
+  void serialize(std::vector<std::uint8_t>* out) const;
+  bool deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset, std::string* error);
+  void debug_write16(std::uint32_t address, std::uint16_t value) { bus_.write16(address, value); }
+  void debug_write32(std::uint32_t address, std::uint32_t value) { bus_.write32(address, value); }
+  std::uint16_t debug_read16(std::uint32_t address) const { return bus_.read16(address); }
+  std::uint32_t debug_read32(std::uint32_t address) const { return bus_.read32(address); }
+  void debug_sync_timers() { sync_timers_from_io(); }
+  void debug_step_timers(int cycles) { step_timers(cycles); }
+  void debug_step_dma() { step_dma(); }
+  void debug_trigger_dma(int timing) { trigger_dma(timing); }
+  void debug_render_line(int y) { render_line(y); }
+  std::uint32_t debug_cpu_reg(int index) const { return cpu_.reg(index); }
+  void debug_set_cpu_reg(int index, std::uint32_t value) { cpu_.set_reg(index, value); }
+  bool debug_handle_swi_hle(std::uint32_t pc_before,
+                            bool thumb_before,
+                            std::uint32_t op_before,
+                            int* cycles_out) {
+    return handle_swi_hle(pc_before, thumb_before, op_before, cycles_out);
+  }
 
  private:
   void render_placeholder();
@@ -69,6 +92,10 @@ class GbaCore {
                          std::vector<int>& line_prio,
                          std::vector<int>& line_layer);
   void render_line_mode4(int y,
+                         std::vector<std::uint32_t>& line_color,
+                         std::vector<int>& line_prio,
+                         std::vector<int>& line_layer);
+  void render_line_mode5(int y,
                          std::vector<std::uint32_t>& line_color,
                          std::vector<int>& line_prio,
                          std::vector<int>& line_layer);
@@ -154,6 +181,8 @@ class GbaCore {
     std::uint32_t counter = 0;
     std::uint16_t control = 0;
     std::uint32_t accum = 0;
+    std::uint16_t io_data_shadow = 0;
+    std::uint16_t io_control_shadow = 0;
   };
   Timer timers_[4]{};
   struct DmaChannel {

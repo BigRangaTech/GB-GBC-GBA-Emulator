@@ -66,7 +66,8 @@ int Cpu::step() {
   }
 
   (this->*op.fn)();
-  if (ime_pending_) {
+  // EI becomes active after the next instruction, not immediately.
+  if (ime_pending_ && last_opcode_ != 0xFB) {
     ime_ = true;
     ime_pending_ = false;
   }
@@ -673,6 +674,7 @@ void Cpu::op_halt() {
 
 void Cpu::op_di() {
   ime_ = false;
+  ime_pending_ = false;
 }
 
 void Cpu::op_ei() {

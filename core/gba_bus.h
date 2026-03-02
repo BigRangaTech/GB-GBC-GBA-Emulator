@@ -8,6 +8,20 @@ namespace gbemu::core {
 
 class GbaBus {
  public:
+  enum class SaveType {
+    None,
+    Sram,
+    Flash64K,
+    Flash128K,
+    Eeprom512B,
+    Eeprom8K,
+  };
+
+  enum class EepromMode {
+    Idle,
+    Reading,
+  };
+
   bool load(const std::vector<std::uint8_t>& rom,
             const std::vector<std::uint8_t>& bios,
             std::string* error);
@@ -39,6 +53,13 @@ class GbaBus {
   bool take_halt_request(bool* stop);
   bool patch_rom16(std::uint32_t address, std::uint16_t value);
   bool patch_rom32(std::uint32_t address, std::uint32_t value);
+  void serialize(std::vector<std::uint8_t>* out) const;
+  bool deserialize(const std::vector<std::uint8_t>& data, std::size_t& offset, std::string* error);
+  bool has_battery() const { return save_type_ != SaveType::None; }
+  bool has_ram() const { return !save_data_.empty(); }
+  std::vector<std::uint8_t> save_data() const { return save_data_; }
+  void load_save_data(const std::vector<std::uint8_t>& data);
+  SaveType save_type() const { return save_type_; }
 
   const std::vector<std::uint8_t>& rom() const { return rom_; }
   const std::vector<std::uint8_t>& bios() const { return bios_; }
@@ -66,6 +87,21 @@ class GbaBus {
                       int bits,
                       bool write) const;
   bool rom_offset_for(std::uint32_t address, std::uint32_t* offset) const;
+  bool is_eeprom_address(std::uint32_t address) const;
+  bool is_flash_address(std::uint32_t address) const;
+  std::uint8_t read_save8(std::uint32_t address) const;
+  void write_save8(std::uint32_t address, std::uint8_t value);
+  std::uint8_t read_flash8(std::uint32_t address) const;
+  void write_flash8(std::uint32_t address, std::uint8_t value);
+  void flash_reset_command_state();
+  std::size_t flash_data_offset(std::uint32_t address) const;
+  void flash_erase_sector(std::uint32_t address);
+  std::uint16_t read_eeprom16(std::uint32_t address) const;
+  void write_eeprom16(std::uint32_t address, std::uint16_t value);
+  void eeprom_set_addr_bits(int bits);
+  std::uint32_t eeprom_block_from_command(std::size_t start_bit, int bits) const;
+  void eeprom_finalize_write_command(int addr_bits);
+  void eeprom_finalize_read_command(int addr_bits) const;
 
   struct Watchpoint {
     std::uint32_t start = 0;
@@ -82,7 +118,19 @@ class GbaBus {
   std::vector<std::uint8_t> vram_;
   std::vector<std::uint8_t> oam_;
   std::vector<std::uint8_t> rom_;
-  std::vector<std::uint8_t> sram_;
+  std::vector<std::uint8_t> save_data_;
+  SaveType save_type_ = SaveType::None;
+  bool flash_id_mode_ = false;
+  int flash_unlock_stage_ = 0;
+  bool flash_expect_program_ = false;
+  bool flash_expect_bank_ = false;
+  bool flash_erase_armed_ = false;
+  std::uint8_t flash_bank_ = 0;
+  mutable EepromMode eeprom_mode_ = EepromMode::Idle;
+  int eeprom_addr_bits_ = 0;
+  mutable std::vector<std::uint8_t> eeprom_cmd_bits_;
+  mutable std::vector<std::uint8_t> eeprom_read_bits_;
+  mutable std::size_t eeprom_read_index_ = 0;
   std::uint32_t rom_mask_ = 0;
   bool rom_size_pow2_ = false;
   bool bios_enabled_ = true;

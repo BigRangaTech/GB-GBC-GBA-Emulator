@@ -656,6 +656,7 @@ core/CMakeFiles/gbemu_core.dir/cpu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
 
 core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.cpp \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/state_io.h \
   /usr/include/alloca.h \
   /usr/include/asm-generic/bitsperlong.h \
   /usr/include/asm-generic/errno-base.h \
@@ -753,6 +754,7 @@ core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/cstdint \
   /usr/include/c++/15/cstdio \
   /usr/include/c++/15/cstdlib \
+  /usr/include/c++/15/cstring \
   /usr/include/c++/15/ctime \
   /usr/include/c++/15/cwchar \
   /usr/include/c++/15/cwctype \
@@ -805,6 +807,8 @@ core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/stdint.h \
   /usr/include/stdio.h \
   /usr/include/stdlib.h \
+  /usr/include/string.h \
+  /usr/include/strings.h \
   /usr/include/time.h \
   /usr/include/wchar.h \
   /usr/include/wctype.h \
@@ -901,6 +905,7 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_core.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/state_io.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/timing.h \
   /usr/include/alloca.h \
   /usr/include/asm-generic/bitsperlong.h \
@@ -971,6 +976,7 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /usr/include/c++/15/bits/ranges_util.h \
   /usr/include/c++/15/bits/refwrap.h \
   /usr/include/c++/15/bits/requires_hosted.h \
+  /usr/include/c++/15/bits/specfun.h \
   /usr/include/c++/15/bits/sstream.tcc \
   /usr/include/c++/15/bits/std_abs.h \
   /usr/include/c++/15/bits/stl_algo.h \
@@ -1001,12 +1007,14 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /usr/include/c++/15/cctype \
   /usr/include/c++/15/cerrno \
   /usr/include/c++/15/clocale \
+  /usr/include/c++/15/cmath \
   /usr/include/c++/15/compare \
   /usr/include/c++/15/concepts \
   /usr/include/c++/15/cstddef \
   /usr/include/c++/15/cstdint \
   /usr/include/c++/15/cstdio \
   /usr/include/c++/15/cstdlib \
+  /usr/include/c++/15/cstring \
   /usr/include/c++/15/ctime \
   /usr/include/c++/15/cwchar \
   /usr/include/c++/15/cwctype \
@@ -1025,6 +1033,7 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /usr/include/c++/15/iosfwd \
   /usr/include/c++/15/iostream \
   /usr/include/c++/15/istream \
+  /usr/include/c++/15/limits \
   /usr/include/c++/15/locale \
   /usr/include/c++/15/new \
   /usr/include/c++/15/numbers \
@@ -1038,6 +1047,18 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /usr/include/c++/15/string \
   /usr/include/c++/15/string_view \
   /usr/include/c++/15/system_error \
+  /usr/include/c++/15/tr1/bessel_function.tcc \
+  /usr/include/c++/15/tr1/beta_function.tcc \
+  /usr/include/c++/15/tr1/ell_integral.tcc \
+  /usr/include/c++/15/tr1/exp_integral.tcc \
+  /usr/include/c++/15/tr1/gamma.tcc \
+  /usr/include/c++/15/tr1/hypergeometric.tcc \
+  /usr/include/c++/15/tr1/legendre_function.tcc \
+  /usr/include/c++/15/tr1/modified_bessel_func.tcc \
+  /usr/include/c++/15/tr1/poly_hermite.tcc \
+  /usr/include/c++/15/tr1/poly_laguerre.tcc \
+  /usr/include/c++/15/tr1/riemann_zeta.tcc \
+  /usr/include/c++/15/tr1/special_function_util.h \
   /usr/include/c++/15/tuple \
   /usr/include/c++/15/type_traits \
   /usr/include/c++/15/typeinfo \
@@ -1056,12 +1077,15 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /usr/include/linux/stddef.h \
   /usr/include/linux/types.h \
   /usr/include/locale.h \
+  /usr/include/math.h \
   /usr/include/pthread.h \
   /usr/include/sched.h \
   /usr/include/stdc-predef.h \
   /usr/include/stdint.h \
   /usr/include/stdio.h \
   /usr/include/stdlib.h \
+  /usr/include/string.h \
+  /usr/include/strings.h \
   /usr/include/time.h \
   /usr/include/wchar.h \
   /usr/include/wctype.h \
@@ -1078,9 +1102,19 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
   /usr/include/x86_64-linux-gnu/bits/errno.h \
   /usr/include/x86_64-linux-gnu/bits/floatn-common.h \
   /usr/include/x86_64-linux-gnu/bits/floatn.h \
+  /usr/include/x86_64-linux-gnu/bits/flt-eval-method.h \
+  /usr/include/x86_64-linux-gnu/bits/fp-fast.h \
+  /usr/include/x86_64-linux-gnu/bits/fp-logb.h \
+  /usr/include/x86_64-linux-gnu/bits/iscanonical.h \
   /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
+  /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \
   /usr/include/x86_64-linux-gnu/bits/locale.h \
   /usr/include/x86_64-linux-gnu/bits/long-double.h \
+  /usr/include/x86_64-linux-gnu/bits/math-vector.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls-helper-functions.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls-macros.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls-narrow.h \
+  /usr/include/x86_64-linux-gnu/bits/mathcalls.h \
   /usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h \
   /usr/include/x86_64-linux-gnu/bits/pthreadtypes-arch.h \
   /usr/include/x86_64-linux-gnu/bits/pthreadtypes.h \
@@ -1157,6 +1191,7 @@ core/CMakeFiles/gbemu_core.dir/gba_core.cpp.o: /home/jessie/Documents/GB-GBC-GBA
 core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.cpp \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_bus.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/gba_cpu.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/core/state_io.h \
   /usr/include/alloca.h \
   /usr/include/asm-generic/bitsperlong.h \
   /usr/include/asm-generic/errno-base.h \
@@ -1247,6 +1282,7 @@ core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/cstdint \
   /usr/include/c++/15/cstdio \
   /usr/include/c++/15/cstdlib \
+  /usr/include/c++/15/cstring \
   /usr/include/c++/15/ctime \
   /usr/include/c++/15/cwchar \
   /usr/include/c++/15/cwctype \
@@ -1298,6 +1334,8 @@ core/CMakeFiles/gbemu_core.dir/gba_cpu.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/stdint.h \
   /usr/include/stdio.h \
   /usr/include/stdlib.h \
+  /usr/include/string.h \
+  /usr/include/strings.h \
   /usr/include/time.h \
   /usr/include/wchar.h \
   /usr/include/wctype.h \

@@ -536,6 +536,8 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emul
   /usr/lib/gcc/x86_64-linux-gnu/15/include/xtestintrin.h
 
 frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o: /home/jessie/Documents/GB-GBC-GBA-Emulator/frontend/vk_frontend.cpp \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/common/config.h \
+  /home/jessie/Documents/GB-GBC-GBA-Emulator/common/input.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/common/rom.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/apu.h \
   /home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.h \
@@ -704,6 +706,7 @@ frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o: /home/jessie/Documents/GB-GBC-G
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
   /usr/include/c++/15/bits/stl_pair.h \
   /usr/include/c++/15/bits/stl_raw_storage_iter.h \
+  /usr/include/c++/15/bits/stl_relops.h \
   /usr/include/c++/15/bits/stl_tempbuf.h \
   /usr/include/c++/15/bits/stl_uninitialized.h \
   /usr/include/c++/15/bits/stl_vector.h \
@@ -797,6 +800,7 @@ frontend/CMakeFiles/gbemu.dir/vk_frontend.cpp.o: /home/jessie/Documents/GB-GBC-G
   /usr/include/c++/15/typeinfo \
   /usr/include/c++/15/unordered_map \
   /usr/include/c++/15/unordered_set \
+  /usr/include/c++/15/utility \
   /usr/include/c++/15/vector \
   /usr/include/ctype.h \
   /usr/include/endian.h \

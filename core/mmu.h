@@ -44,6 +44,7 @@ class Mmu {
   void load_ram_data(const std::vector<std::uint8_t>& data);
   std::vector<std::uint8_t> rtc_data() const;
   void load_rtc_data(const std::vector<std::uint8_t>& data);
+  std::string take_serial_output();
 
  private:
   enum class MbcType {
@@ -108,6 +109,7 @@ class Mmu {
   std::uint8_t obpi_ = 0;
   bool obpi_inc_ = false;
   std::uint8_t joypad_state_ = 0xFF;
+  std::string serial_output_;
 
   std::int64_t rtc_offset_seconds_ = 0;
   std::int64_t rtc_base_time_ = 0;
