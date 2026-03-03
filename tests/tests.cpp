@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -21,6 +22,7 @@
 #include "gba_core.h"
 #include "gba_cpu.h"
 #include "mmu.h"
+#include "ppu.h"
 #include "rom.h"
 
 namespace {
@@ -28,6 +30,7 @@ namespace {
 int failures = 0;
 
 std::string to_lower(std::string value);
+std::string serial_debug_text(const std::string& serial_bytes);
 bool is_rom_extension(const std::filesystem::path& path);
 gbemu::core::System detect_system(const std::vector<std::uint8_t>& data);
 
@@ -36,6 +39,13 @@ void expect(bool condition, const std::string& message) {
     std::cout << "FAIL: " << message << "\n";
     ++failures;
   }
+}
+
+int angle_distance_u16(std::uint16_t a, std::uint16_t b) {
+  int da = static_cast<int>(a);
+  int db = static_cast<int>(b);
+  int diff = std::abs(da - db);
+  return std::min(diff, 65536 - diff);
 }
 
 void test_read_file_missing() {
@@ -182,6 +192,185 @@ void test_gb_ei_delay_before_interrupt_service() {
          "IRQ service should clear the handled interrupt request bit");
 }
 
+void test_gb_interrupt_register_unused_bits() {
+  gbemu::core::Mmu mmu;
+  std::vector<std::uint8_t> rom(0x200, 0);
+  std::vector<std::uint8_t> boot_rom(0x100, 0);
+  std::string error;
+  bool ok = mmu.load(gbemu::core::System::GB, rom, boot_rom, &error);
+  expect(ok, "MMU should load for IF/IE unused-bit behavior test");
+  if (!ok) {
+    return;
+  }
+
+  mmu.write_u8(0xFF0F, 0x00);
+  expect(mmu.read_u8(0xFF0F) == 0xE0u,
+         "IF upper bits should read back as set");
+  mmu.write_u8(0xFF0F, 0x1Fu);
+  expect(mmu.read_u8(0xFF0F) == 0xFFu,
+         "IF should preserve lower interrupt bits while forcing upper bits set");
+
+  mmu.write_u8(0xFFFF, 0x00);
+  expect(mmu.read_u8(0xFFFF) == 0xE0u,
+         "IE upper bits should read back as set");
+  mmu.write_u8(0xFFFF, 0x1Fu);
+  expect(mmu.read_u8(0xFFFF) == 0xFFu,
+         "IE should preserve lower interrupt bits while forcing upper bits set");
+}
+
+void test_gb_halt_ime0_resume_executes_next_instruction() {
+  gbemu::core::Mmu mmu;
+  gbemu::core::Cpu cpu;
+  std::vector<std::uint8_t> rom(0x8000, 0x00);
+  std::vector<std::uint8_t> boot_rom(0x100, 0x00);
+  boot_rom[0x00] = 0x76; // HALT
+  boot_rom[0x01] = 0x04; // INC B
+  boot_rom[0x02] = 0x00; // NOP
+
+  std::string error;
+  bool ok = mmu.load(gbemu::core::System::GB, rom, boot_rom, &error);
+  expect(ok, "MMU should load for HALT IME=0 resume test");
+  if (!ok) {
+    return;
+  }
+
+  cpu.connect(&mmu);
+  cpu.reset();
+  mmu.write_u8(0xFFFF, 0x01); // IE: VBlank enabled
+  mmu.write_u8(0xFF0F, 0x00); // IF: none pending
+
+  cpu.step(); // HALT
+  expect(cpu.halted(), "CPU should enter HALT when no interrupt is pending");
+  expect(cpu.regs().pc == 0x0001,
+         "PC should point to next opcode after HALT");
+
+  mmu.write_u8(0xFF0F, 0x01); // request interrupt while IME=0
+  cpu.step(); // should unhalt and execute INC B in same step
+  expect(!cpu.halted(), "CPU should leave HALT when an interrupt request is raised");
+  expect(cpu.regs().b == 0x01,
+         "CPU should execute next instruction immediately after leaving HALT with IME=0");
+  expect(cpu.regs().pc == 0x0002,
+         "PC should advance past resumed instruction");
+  expect((mmu.interrupt_flags() & 0x01u) != 0,
+         "Interrupt should remain pending when IME=0 and ISR is not serviced");
+}
+
+void test_gb_stat_irq_blocking_across_mode0_to_mode1() {
+  gbemu::core::Mmu mmu;
+  gbemu::core::Ppu ppu;
+  std::vector<std::uint8_t> rom(0x200, 0);
+  std::vector<std::uint8_t> boot_rom(0x100, 0);
+  std::string error;
+  bool ok = mmu.load(gbemu::core::System::GB, rom, boot_rom, &error);
+  expect(ok, "MMU should load for STAT IRQ blocking test");
+  if (!ok) {
+    return;
+  }
+
+  ppu.set_system(gbemu::core::System::GB);
+  mmu.write_u8(0xFF40, 0x80); // LCD on
+  mmu.write_u8(0xFF41, 0x18); // STAT IRQ enable: mode 0 + mode 1
+  mmu.write_u8(0xFF0F, 0x00); // clear IF
+
+  auto step_until = [&ppu, &mmu](const std::function<bool()>& predicate, int max_steps) {
+    for (int i = 0; i < max_steps; ++i) {
+      ppu.step(1, &mmu);
+      if (predicate()) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  bool reached_mode0_line143 = step_until(
+      [&mmu]() {
+        return mmu.read_u8(0xFF44) == 143u && (mmu.read_u8(0xFF41) & 0x03u) == 0u;
+      },
+      456 * 160);
+  expect(reached_mode0_line143, "PPU should reach line 143 mode 0");
+  if (!reached_mode0_line143) {
+    return;
+  }
+
+  mmu.write_u8(0xFF0F, 0x00); // acknowledge STAT while mode 0 source is still active
+
+  bool reached_mode1_line144 = step_until(
+      [&mmu]() {
+        return mmu.read_u8(0xFF44) == 144u && (mmu.read_u8(0xFF41) & 0x03u) == 1u;
+      },
+      456);
+  expect(reached_mode1_line144, "PPU should transition to line 144 mode 1");
+  if (!reached_mode1_line144) {
+    return;
+  }
+
+  expect((mmu.read_u8(0xFF0F) & 0x02u) == 0u,
+         "STAT IRQ should be blocked across mode 0->1 when STAT line never deasserts");
+
+  // After STAT line deasserts (mode 2 on line 0), a later mode 0 rise should trigger again.
+  mmu.write_u8(0xFF0F, 0x00);
+  bool reached_mode2_line0 = step_until(
+      [&mmu]() {
+        return mmu.read_u8(0xFF44) == 0u && (mmu.read_u8(0xFF41) & 0x03u) == 2u;
+      },
+      456 * 12);
+  expect(reached_mode2_line0, "PPU should wrap back to line 0 mode 2");
+  if (!reached_mode2_line0) {
+    return;
+  }
+
+  bool reached_mode0_line0 = step_until(
+      [&mmu]() {
+        return mmu.read_u8(0xFF44) == 0u && (mmu.read_u8(0xFF41) & 0x03u) == 0u;
+      },
+      456);
+  expect(reached_mode0_line0, "PPU should enter line 0 mode 0");
+  if (!reached_mode0_line0) {
+    return;
+  }
+
+  expect((mmu.read_u8(0xFF0F) & 0x02u) != 0u,
+         "STAT IRQ should retrigger once STAT line deasserts and rises again");
+}
+
+void test_gb_cb_bit_hl_timing() {
+  gbemu::core::Mmu mmu;
+  gbemu::core::Cpu cpu;
+  std::vector<std::uint8_t> rom(0x8000, 0x00);
+  std::vector<std::uint8_t> boot_rom(0x100, 0x00);
+  boot_rom[0x00] = 0x21; // LD HL,d16
+  boot_rom[0x01] = 0x00;
+  boot_rom[0x02] = 0xC0;
+  boot_rom[0x03] = 0xCB; // BIT 0,(HL)
+  boot_rom[0x04] = 0x46;
+  boot_rom[0x05] = 0xCB; // BIT 7,(HL)
+  boot_rom[0x06] = 0x7E;
+
+  std::string error;
+  bool ok = mmu.load(gbemu::core::System::GB, rom, boot_rom, &error);
+  expect(ok, "MMU should load for CB BIT (HL) timing test");
+  if (!ok) {
+    return;
+  }
+
+  cpu.connect(&mmu);
+  cpu.reset();
+  mmu.write_u8(0xC000, 0x01);
+
+  int used = cpu.step(); // LD HL,d16
+  expect(used == 12, "LD HL,d16 should consume 12 cycles");
+
+  used = cpu.step(); // BIT 0,(HL)
+  expect(used == 12, "CB BIT 0,(HL) should consume 12 cycles");
+  expect((cpu.regs().f & 0x80u) == 0, "BIT 0,(HL) on bit-set value should clear Z");
+  expect((cpu.regs().f & 0x40u) == 0, "BIT should clear N flag");
+  expect((cpu.regs().f & 0x20u) != 0, "BIT should set H flag");
+
+  used = cpu.step(); // BIT 7,(HL)
+  expect(used == 12, "CB BIT 7,(HL) should consume 12 cycles");
+  expect((cpu.regs().f & 0x80u) != 0, "BIT 7,(HL) on clear bit should set Z");
+}
+
 std::vector<std::uint8_t> build_gba_spin_rom() {
   std::vector<std::uint8_t> rom(0x200, 0);
   // ARM B . at 0x08000000
@@ -239,6 +428,50 @@ void write_le32(std::vector<std::uint8_t>* data, std::size_t offset, std::uint32
   (*data)[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFF);
   (*data)[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFF);
   (*data)[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFF);
+}
+
+std::vector<std::uint8_t> build_gba_timing_rom() {
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  if (rom.size() < 0x400) {
+    rom.resize(0x400, 0);
+  }
+  for (std::size_t off = 0; off < 0x100; off += 4) {
+    write_le32(&rom, off, 0xE1A00000u); // ARM NOP
+  }
+  rom[0x20] = 0xC0; // THUMB NOP (MOV r8, r8)
+  rom[0x21] = 0x46;
+  rom[0x22] = 0xC0;
+  rom[0x23] = 0x46;
+  return rom;
+}
+
+void test_gba_mgba_debug_output_capture() {
+  gbemu::core::GbaBus bus;
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = bus.load(rom, bios, &error);
+  expect(ok, "GbaBus should load for mGBA debug output capture test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegDebugEnable = 0x04FFF780u;
+  constexpr std::uint32_t kRegDebugFlags = 0x04FFF700u;
+  constexpr std::uint32_t kRegDebugString = 0x04FFF600u;
+
+  bus.write16(kRegDebugEnable, 0xC0DEu);
+  const char* text = "PASS";
+  for (int i = 0; text[i] != '\0'; ++i) {
+    bus.write8(kRegDebugString + static_cast<std::uint32_t>(i),
+               static_cast<std::uint8_t>(text[i]));
+  }
+  bus.write8(kRegDebugString + 4u, 0u);
+  bus.write16(kRegDebugFlags, 1u);
+
+  std::string out = bus.take_debug_output();
+  expect(out.find("PASS") != std::string::npos,
+         "mGBA debug channel writes should be captured in GBA output stream");
 }
 
 void test_gba_cpu_swp_and_swpb() {
@@ -383,6 +616,211 @@ void test_gba_cpu_arm_load_store_rrx_offset() {
   expect(used > 0, "ARM LDR with RRX offset should execute");
   expect(cpu.reg(1) == 0xFFFFFFFFu,
          "LDR register-offset ROR #0 should use RRX with carry when computing offset");
+}
+
+void test_gba_waitcnt_nseq_seq_fetch_cycles() {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for WAITCNT nseq/seq timing test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  core.debug_set_cpu_reg(15, 0x08000000u);
+  core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+  core.debug_write16(kRegWaitcnt, 0x0030u); // WS0 first=8, second=2, prefetch off
+
+  int first = core.debug_step_cpu_instruction();
+  int second = core.debug_step_cpu_instruction();
+  expect(first > second,
+         "First ROM fetch should pay non-sequential wait and exceed sequential follow-up");
+}
+
+void test_gba_prefetch_reduces_sequential_fetch_penalty() {
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  auto run_second_cycle = [kRegWaitcnt](std::uint16_t waitcnt) -> int {
+    gbemu::core::GbaCore core;
+    core.set_fastboot(true);
+    std::vector<std::uint8_t> rom = build_gba_timing_rom();
+    std::vector<std::uint8_t> bios(0x4000, 0);
+    std::string error;
+    bool ok = core.load(rom, bios, &error);
+    expect(ok, "GbaCore load should succeed for prefetch timing test");
+    if (!ok) {
+      return 0;
+    }
+    core.debug_set_cpu_reg(15, 0x08000000u);
+    core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+    core.debug_write16(kRegWaitcnt, waitcnt);
+    int first = core.debug_step_cpu_instruction();
+    int second = core.debug_step_cpu_instruction();
+    expect(first > 0 && second > 0, "Prefetch timing test steps should execute");
+    return second;
+  };
+
+  int second_no_prefetch = run_second_cycle(0x0030u);
+  int second_with_prefetch = run_second_cycle(0x4030u); // +bit14 prefetch
+  expect(second_with_prefetch < second_no_prefetch,
+         "WAITCNT prefetch should reduce steady-state sequential ROM fetch cost");
+}
+
+void test_gba_waitcnt_write_flushes_prefetch_stream() {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  write_le32(&rom, 0x120, 0xE1A00000u); // NOP
+  write_le32(&rom, 0x124, 0xE1A00000u); // NOP
+  write_le32(&rom, 0x128, 0xE1A00000u); // NOP
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for WAITCNT write prefetch flush test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kProgPc = 0x08000120u;
+  core.debug_set_cpu_reg(15, kProgPc);
+  core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+
+  core.debug_write16(kRegWaitcnt, 0x4060u); // prefetch on, fast WS0
+  int first = core.debug_step_cpu_instruction();
+  int steady_fast = core.debug_step_cpu_instruction();
+  expect(first > 0 && steady_fast > 0,
+         "WAITCNT write prefetch flush test should execute baseline steps");
+
+  core.debug_write16(kRegWaitcnt, 0x4030u); // prefetch on, slow WS0
+  int after_waitcnt_change = core.debug_step_cpu_instruction();
+  expect(after_waitcnt_change > steady_fast,
+         "WAITCNT writes should flush fetch stream/prefetch so next fetch pays updated wait cost");
+}
+
+void test_gba_prefetch_pipeline_refill_on_branch_and_mode_switch() {
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+
+  {
+    gbemu::core::GbaCore core;
+    core.set_fastboot(true);
+    std::vector<std::uint8_t> rom = build_gba_timing_rom();
+    write_le32(&rom, 0x00, 0xEA000002u); // B to 0x08000010
+    write_le32(&rom, 0x10, 0xE1A00000u); // NOP at branch target
+    write_le32(&rom, 0x14, 0xE1A00000u); // next sequential NOP
+    std::vector<std::uint8_t> bios(0x4000, 0);
+    std::string error;
+    bool ok = core.load(rom, bios, &error);
+    expect(ok, "GbaCore load should succeed for branch refill timing test");
+    if (!ok) {
+      return;
+    }
+
+    core.debug_set_cpu_reg(15, 0x08000000u);
+    core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+    core.debug_write16(kRegWaitcnt, 0x4030u); // prefetch on, high WS0 first wait
+
+    int branch = core.debug_step_cpu_instruction();
+    int after_branch = core.debug_step_cpu_instruction();
+    int steady = core.debug_step_cpu_instruction();
+    expect(branch > 0 && after_branch > 0 && steady > 0,
+           "Branch refill timing test steps should execute");
+    expect(after_branch > steady,
+           "First fetch after branch should pay pipeline refill penalty vs steady sequential fetch");
+  }
+
+  {
+    gbemu::core::GbaCore core;
+    core.set_fastboot(true);
+    std::vector<std::uint8_t> rom = build_gba_timing_rom();
+    write_le32(&rom, 0x00, 0xE12FFF10u); // BX r0 (ARM->THUMB)
+    write_le32(&rom, 0x04, 0xE1A00000u); // ARM NOP fallback
+    std::vector<std::uint8_t> bios(0x4000, 0);
+    std::string error;
+    bool ok = core.load(rom, bios, &error);
+    expect(ok, "GbaCore load should succeed for ARM/THUMB refill timing test");
+    if (!ok) {
+      return;
+    }
+
+    core.debug_set_cpu_reg(15, 0x08000000u);
+    core.debug_set_cpu_reg(0, 0x08000021u);
+    core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+    core.debug_write16(kRegWaitcnt, 0x4030u); // prefetch on, high WS0 first wait
+
+    int bx = core.debug_step_cpu_instruction();
+    std::uint32_t cpsr_after_bx = core.debug_cpu_cpsr();
+    std::uint32_t pc_after_bx = core.cpu_pc();
+    {
+      std::ostringstream msg;
+      msg << "BX target with bit0 set should switch CPU to THUMB state"
+          << " (cpsr=0x" << std::hex << cpsr_after_bx
+          << " pc=0x" << pc_after_bx << ")";
+      expect((cpsr_after_bx & (1u << 5)) != 0, msg.str());
+    }
+    int thumb_first = core.debug_step_cpu_instruction();
+    int thumb_steady = core.debug_step_cpu_instruction();
+    expect(bx > 0 && thumb_first > 0 && thumb_steady > 0,
+           "ARM/THUMB refill timing test steps should execute");
+    {
+      std::ostringstream msg;
+      msg << "First THUMB fetch after interworking should pay refill penalty vs steady THUMB fetch"
+          << " (first=" << thumb_first << " steady=" << thumb_steady << ")";
+      expect(thumb_first > thumb_steady, msg.str());
+    }
+  }
+}
+
+void test_gba_prefetch_stream_break_on_gamepak_data_access() {
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kLiteral = 0x12345678u;
+  constexpr std::uint32_t kProgPc = 0x08000120u; // outside patched GBA header/logo region
+
+  auto run_second_cycle = [kRegWaitcnt, kProgPc, kLiteral](bool with_rom_data_access,
+                                                           std::uint32_t* loaded_out) -> int {
+    gbemu::core::GbaCore core;
+    core.set_fastboot(true);
+    std::vector<std::uint8_t> rom = build_gba_timing_rom();
+    if (with_rom_data_access) {
+      // LDR r0, [pc, #0] reads literal from kProgPc + 8 (Game Pak data access).
+      write_le32(&rom, 0x120, 0xE59F0000u);
+      write_le32(&rom, 0x124, 0xE1A00000u); // NOP
+      write_le32(&rom, 0x128, kLiteral);
+    } else {
+      write_le32(&rom, 0x120, 0xE1A00000u); // NOP
+      write_le32(&rom, 0x124, 0xE1A00000u); // NOP
+    }
+    std::vector<std::uint8_t> bios(0x4000, 0);
+    std::string error;
+    bool ok = core.load(rom, bios, &error);
+    expect(ok, "GbaCore load should succeed for data-access prefetch break timing test");
+    if (!ok) {
+      return 0;
+    }
+
+    core.debug_set_cpu_reg(15, kProgPc);
+    core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+    core.debug_write16(kRegWaitcnt, 0x4030u); // prefetch on, high WS0 first wait
+
+    int first = core.debug_step_cpu_instruction();
+    int second = core.debug_step_cpu_instruction();
+    expect(first > 0 && second > 0,
+           "Data-access prefetch break timing test steps should execute");
+    if (with_rom_data_access && loaded_out) {
+      *loaded_out = core.debug_cpu_reg(0);
+    }
+    return second;
+  };
+
+  std::uint32_t loaded = 0;
+  int steady = run_second_cycle(false, nullptr);
+  int after_data_access = run_second_cycle(true, &loaded);
+  expect(loaded == kLiteral, "ARM literal LDR should read Game Pak data value");
+  expect(after_data_access > steady,
+         "Game Pak data read should break fetch stream/prefetch and slow following fetch");
 }
 
 void test_gba_hle_swi_math_and_affine() {
@@ -548,6 +986,172 @@ void test_gba_hle_swi_wait_and_memcpy_paths() {
          "CpuFastSet should leave non-block remainder words untouched");
 }
 
+void test_gba_hle_swi_halt_stop_paths() {
+  auto run = [](std::uint32_t swi_imm, const std::string& label) {
+    gbemu::core::GbaCore core;
+    std::vector<std::uint8_t> rom = build_gba_spin_rom();
+    std::vector<std::uint8_t> bios(0x4000, 0);
+    std::string error;
+    bool ok = core.load(rom, bios, &error);
+    expect(ok, "GbaCore load should succeed for " + label + " test");
+    if (!ok) {
+      return;
+    }
+    core.set_hle_swi(true);
+
+    int cycles = 0;
+    std::uint32_t pc_before = 0x08000180u;
+    bool handled = core.debug_handle_swi_hle(pc_before, false, 0xEF000000u | swi_imm, &cycles);
+    expect(handled, label + " should be handled by HLE SWI path");
+    expect(core.debug_halted(), label + " should place CPU in halted state");
+    expect(core.cpu_pc() == pc_before + 4u, label + " should advance ARM PC by 4");
+    expect(cycles > 0, label + " should report non-zero cycle cost");
+  };
+
+  run(0x02u, "SWI Halt");
+  run(0x03u, "SWI Stop");
+}
+
+void test_gba_hle_swi_trig_decompress_and_bios_fallback() {
+  gbemu::core::GbaCore core;
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for SWI trig/decompress test");
+  if (!ok) {
+    return;
+  }
+  core.set_hle_swi(true);
+
+  auto write_bytes = [](gbemu::core::GbaCore* target,
+                        std::uint32_t addr,
+                        const std::vector<std::uint8_t>& bytes) {
+    if (!target) {
+      return;
+    }
+    for (std::size_t i = 0; i < bytes.size(); i += 2) {
+      std::uint16_t lo = bytes[i];
+      std::uint16_t hi = (i + 1 < bytes.size()) ? static_cast<std::uint16_t>(bytes[i + 1]) : 0u;
+      target->debug_write16(addr + static_cast<std::uint32_t>(i),
+                            static_cast<std::uint16_t>(lo | (hi << 8u)));
+    }
+  };
+  auto read_bytes = [&core](std::uint32_t addr, std::size_t count) {
+    std::vector<std::uint8_t> out(count, 0);
+    for (std::size_t i = 0; i < count; i += 2) {
+      std::uint16_t word = core.debug_read16(addr + static_cast<std::uint32_t>(i));
+      out[i] = static_cast<std::uint8_t>(word & 0xFFu);
+      if (i + 1 < count) {
+        out[i + 1] = static_cast<std::uint8_t>((word >> 8u) & 0xFFu);
+      }
+    }
+    return out;
+  };
+
+  int cycles = 0;
+  bool handled = false;
+
+  core.debug_set_cpu_reg(0, 0u);
+  handled = core.debug_handle_swi_hle(0x08000200u, false, 0xEF000009u, &cycles);
+  expect(handled, "HLE SWI ArcTan should be handled");
+  expect(core.debug_cpu_reg(0) == 0u, "SWI ArcTan(0) should return 0 angle");
+
+  core.debug_set_cpu_reg(0, 0x00010000u); // tan(45deg) in 16.16
+  handled = core.debug_handle_swi_hle(0x08000204u, false, 0xEF000009u, &cycles);
+  expect(handled, "HLE SWI ArcTan should handle positive fixed-point input");
+  expect(angle_distance_u16(static_cast<std::uint16_t>(core.debug_cpu_reg(0) & 0xFFFFu), 0x2000u) < 0x0500,
+         "SWI ArcTan should produce approximately 45-degree BIOS angle units");
+
+  core.debug_set_cpu_reg(0, 0x00010000u); // y
+  core.debug_set_cpu_reg(1, 0x00000000u); // x
+  handled = core.debug_handle_swi_hle(0x08000208u, false, 0xEF00000Au, &cycles);
+  expect(handled, "HLE SWI ArcTan2 should be handled");
+  expect(angle_distance_u16(static_cast<std::uint16_t>(core.debug_cpu_reg(0) & 0xFFFFu), 0x4000u) < 0x0500,
+         "SWI ArcTan2 should produce approximately 90-degree BIOS angle units");
+
+  core.debug_set_cpu_reg(0, 0x00000000u); // y
+  core.debug_set_cpu_reg(1, 0xFFFF0000u); // x < 0
+  handled = core.debug_handle_swi_hle(0x0800020Cu, false, 0xEF00000Au, &cycles);
+  expect(handled, "HLE SWI ArcTan2 should handle x<0 quadrant");
+  expect(angle_distance_u16(static_cast<std::uint16_t>(core.debug_cpu_reg(0) & 0xFFFFu), 0x8000u) < 0x0600,
+         "SWI ArcTan2 should produce approximately 180-degree BIOS angle units");
+
+  constexpr std::uint32_t kLzSrc = 0x02002000u;
+  constexpr std::uint32_t kRlSrc = 0x02002100u;
+  constexpr std::uint32_t kWramDst = 0x02003000u;
+  constexpr std::uint32_t kVramDst = 0x06000020u;
+
+  const std::vector<std::uint8_t> lz_stream = {
+      0x10u, 0x08u, 0x00u, 0x00u, // LZ77 header, output size 8
+      0x20u,                      // flags: literal, literal, compressed
+      'A', 'B',
+      0x30u, 0x01u,               // len=6, disp=2
+  };
+  const std::vector<std::uint8_t> lz_expected = {'A', 'B', 'A', 'B', 'A', 'B', 'A', 'B'};
+  write_bytes(&core, kLzSrc, lz_stream);
+
+  core.debug_set_cpu_reg(0, kLzSrc);
+  core.debug_set_cpu_reg(1, kWramDst);
+  handled = core.debug_handle_swi_hle(0x08000210u, false, 0xEF000011u, &cycles);
+  expect(handled, "HLE SWI LZ77UnCompWram should be handled");
+  expect(read_bytes(kWramDst, lz_expected.size()) == lz_expected,
+         "SWI LZ77UnCompWram should decode test stream correctly");
+
+  core.debug_set_cpu_reg(0, kLzSrc);
+  core.debug_set_cpu_reg(1, kVramDst);
+  handled = core.debug_handle_swi_hle(0x08000214u, false, 0xEF000012u, &cycles);
+  expect(handled, "HLE SWI LZ77UnCompVram should be handled");
+  expect(read_bytes(kVramDst, lz_expected.size()) == lz_expected,
+         "SWI LZ77UnCompVram should decode test stream correctly");
+
+  const std::vector<std::uint8_t> rl_stream = {
+      0x30u, 0x06u, 0x00u, 0x00u, // RL header, output size 6
+      0x80u, 'C',                 // compressed run: 3x 'C'
+      0x02u, 'D', 'D', 'E',       // raw run: 3 bytes
+  };
+  const std::vector<std::uint8_t> rl_expected = {'C', 'C', 'C', 'D', 'D', 'E'};
+  write_bytes(&core, kRlSrc, rl_stream);
+
+  core.debug_set_cpu_reg(0, kRlSrc);
+  core.debug_set_cpu_reg(1, kWramDst + 0x20u);
+  handled = core.debug_handle_swi_hle(0x08000218u, false, 0xEF000015u, &cycles);
+  expect(handled, "HLE SWI RLUnCompWram should be handled");
+  expect(read_bytes(kWramDst + 0x20u, rl_expected.size()) == rl_expected,
+         "SWI RLUnCompWram should decode test stream correctly");
+
+  core.debug_set_cpu_reg(0, kRlSrc);
+  core.debug_set_cpu_reg(1, kVramDst + 0x20u);
+  handled = core.debug_handle_swi_hle(0x0800021Cu, false, 0xEF000016u, &cycles);
+  expect(handled, "HLE SWI RLUnCompVram should be handled");
+  expect(read_bytes(kVramDst + 0x20u, rl_expected.size()) == rl_expected,
+         "SWI RLUnCompVram should decode test stream correctly");
+
+  // No real BIOS loaded: unsupported risky SWI should no-op in HLE path.
+  core.debug_set_cpu_reg(15, 0x08000300u);
+  handled = core.debug_handle_swi_hle(0x08000300u, false, 0xEF000013u, &cycles);
+  expect(handled, "Unsupported risky SWI should no-op when no real BIOS is available");
+  expect(core.cpu_pc() == 0x08000304u, "No-op risky SWI path should still advance PC");
+
+  // Real BIOS present: risky/invalid SWI paths should fall back to BIOS execution.
+  gbemu::core::GbaCore core_with_bios;
+  std::vector<std::uint8_t> realish_bios(0x4000, 0);
+  realish_bios[0] = 0xEA; // non-zero marker so fallback path treats BIOS as available
+  ok = core_with_bios.load(rom, realish_bios, &error);
+  expect(ok, "GbaCore load should succeed for BIOS fallback SWI test");
+  if (!ok) {
+    return;
+  }
+  core_with_bios.set_hle_swi(true);
+  write_bytes(&core_with_bios, kLzSrc, {0x00u, 0x00u, 0x00u, 0x00u}); // invalid LZ header
+  core_with_bios.debug_set_cpu_reg(0, kLzSrc);
+  core_with_bios.debug_set_cpu_reg(1, kWramDst);
+  handled = core_with_bios.debug_handle_swi_hle(0x08000400u, false, 0xEF000011u, &cycles);
+  expect(!handled, "Malformed LZ77 stream should fall back to real BIOS path when available");
+  handled = core_with_bios.debug_handle_swi_hle(0x08000404u, false, 0xEF000013u, &cycles);
+  expect(!handled, "Unsupported risky SWI should fall back to real BIOS path when available");
+}
+
 void test_gba_timer_reload_shadow_and_cascade() {
   gbemu::core::GbaCore core;
   std::vector<std::uint8_t> rom = build_gba_spin_rom();
@@ -650,6 +1254,104 @@ void test_gba_dma_repeat_irq_and_start_modes() {
   core.debug_step_dma();
   expect(core.debug_read16(kDst + 0x24u) == 0xBCDEu,
          "DMA0 timing=3 compatibility path should execute as immediate");
+}
+
+void test_gba_irq_ack_priority_and_lr_entry() {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for IRQ ack/priority test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegIe = 0x04000200u;
+  constexpr std::uint32_t kRegIf = 0x04000202u;
+  constexpr std::uint32_t kRegIme = 0x04000208u;
+
+  core.debug_set_cpu_reg(15, 0x08000000u);
+  core.debug_write16(kRegIe, 0x0009u);  // VBlank + Timer0 enabled
+  core.debug_set_if_bits(0x0009u);      // both pending
+  core.debug_write16(kRegIme, 0x0001u); // IME enabled
+
+  core.debug_service_interrupts();
+
+  expect(core.debug_read16(kRegIf) == 0x0008u,
+         "IRQ entry should clear only highest-priority pending IF bit");
+  expect(core.debug_cpu_reg(14) == 0x08000004u,
+         "IRQ entry should capture LR as PC+4 from inter-instruction boundary");
+  expect(core.cpu_pc() < 0x08000000u,
+         "After IRQ entry, CPU should execute from BIOS IRQ vector space");
+}
+
+void test_gba_irq_register_masking() {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for IRQ register masking test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegIe = 0x04000200u;
+  constexpr std::uint32_t kRegIf = 0x04000202u;
+  constexpr std::uint32_t kRegIme = 0x04000208u;
+
+  core.debug_write16(kRegIe, 0xFFFFu);
+  expect(core.debug_read16(kRegIe) == 0x3FFFu,
+         "IE should mask to writable interrupt bits");
+
+  core.debug_set_if_bits(0xFFFFu);
+  expect(core.debug_read16(kRegIf) == 0x3FFFu,
+         "IF set helper should only raise writable interrupt bits");
+
+  core.debug_write16(kRegIme, 0xFFFFu);
+  expect(core.debug_read16(kRegIme) == 0x0001u,
+         "IME should only preserve bit 0");
+
+  core.debug_write16(kRegIme, 0xFFFEu);
+  expect(core.debug_read16(kRegIme) == 0x0000u,
+         "IME bit 0 should clear when written as 0");
+}
+
+void test_gba_irq_thumb_origin_lr_pipeline() {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for THUMB IRQ LR pipeline test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegIe = 0x04000200u;
+  constexpr std::uint32_t kRegIme = 0x04000208u;
+
+  core.debug_set_cpu_reg(15, 0x08000002u); // next THUMB halfword at IRQ boundary
+  std::uint32_t cpsr = core.debug_cpu_cpsr();
+  cpsr &= ~(1u << 7); // IRQ enabled in CPSR
+  cpsr |= (1u << 5);  // THUMB state
+  core.debug_set_cpu_cpsr(cpsr);
+  core.debug_write16(kRegIe, 0x0008u);     // Timer0 only
+  core.debug_set_if_bits(0x0008u);         // pending timer interrupt
+  core.debug_write16(kRegIme, 0x0001u);    // master IRQ enable
+
+  core.debug_service_interrupts();
+
+  expect(core.debug_cpu_reg(14) == 0x08000006u,
+         "IRQ entry from THUMB state should capture LR as boundary PC+4");
+  expect((core.debug_cpu_cpsr() & (1u << 5)) == 0,
+         "IRQ entry should force ARM state in CPSR");
+  expect((core.debug_cpu_cpsr() & (1u << 7)) != 0,
+         "IRQ entry should set CPSR I bit (IRQ disable)");
 }
 
 void test_gba_ppu_mode5_bitmap_pages() {
@@ -1007,6 +1709,7 @@ enum class ConformanceJudge {
   None,
   Blargg,
   Mooneye,
+  GbaText,
 };
 
 enum class ConformanceVerdict {
@@ -1017,14 +1720,17 @@ enum class ConformanceVerdict {
 
 std::vector<ConformanceCase> default_conformance_cases() {
   return {
-      {"blargg-smoke", "smoke", gbemu::core::System::GB, 240, false, {"conformance", "smoke", "blargg"}},
+      {"blargg-smoke-instr-timing", "smoke", gbemu::core::System::GB, 240, false,
+       {"conformance", "smoke", "blargg", "instr-timing"}},
       {"mooneye-smoke", "smoke", gbemu::core::System::GB, 240, false, {"conformance", "smoke", "mooneye"}},
-      {"gba-smoke", "smoke", gbemu::core::System::GBA, 120, true, {"conformance", "smoke", "gba"}},
+      {"gba-smoke", "gba-smoke", gbemu::core::System::GBA, 120, true, {"conformance", "smoke", "gba"}},
       {"gba-cpu-arm", "gba-cpu", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "cpu", "arm"}},
       {"gba-cpu-thumb", "gba-cpu", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "cpu", "thumb"}},
       {"gba-dma-timer", "gba-dma-timer", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "dma", "timer"}},
+      {"gba-mem-timing", "gba-mem-timing", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "mem", "timing"}},
       {"gba-ppu-modes", "gba-ppu", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "ppu"}},
       {"gba-swi-bios", "gba-swi-bios", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "swi"}},
+      {"gba-swi-compat", "gba-swi-compat", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "swi", "compat"}},
       {"gbc-ppu", "gbc-ppu", gbemu::core::System::GBC, 240, false, {"conformance", "gbc", "ppu"}},
       {"gb-timer-irq", "gb-timer-irq", gbemu::core::System::GB, 240, false, {"conformance", "gb", "timer", "irq"}},
   };
@@ -1168,12 +1874,15 @@ bool parse_env_bool(const char* name, bool default_value) {
 
 std::vector<std::uint8_t> build_conformance_boot_rom(
     gbemu::core::System system,
-    const std::optional<std::vector<std::uint8_t>>& fallback_boot) {
+    const std::optional<std::vector<std::uint8_t>>& fallback_boot,
+    bool prefer_real_boot = false) {
   if (system == gbemu::core::System::GBA) {
     return fallback_boot.value_or(std::vector<std::uint8_t>{});
   }
 
-  bool use_real_boot = parse_env_bool("GBEMU_CONFORMANCE_USE_REAL_BOOT", false);
+  bool force_synth_boot = parse_env_bool("GBEMU_CONFORMANCE_FORCE_SYNTH_BOOT", false);
+  bool use_real_boot =
+      !force_synth_boot && (parse_env_bool("GBEMU_CONFORMANCE_USE_REAL_BOOT", false) || prefer_real_boot);
   if (use_real_boot && fallback_boot.has_value()) {
     return *fallback_boot;
   }
@@ -1227,6 +1936,10 @@ std::vector<std::uint8_t> build_conformance_boot_rom(
   emit_ldh_write(0x4B, 0x00); // WX
   emit_ldh_write(0x0F, 0xE1); // IF
 
+  // Recreate post-boot F=0xB0 (Z=1,N=0,H=1,C=1), then restore A.
+  emit({0x3E, 0x8F}); // LD A,0x8F
+  emit({0xC6, 0x71}); // ADD A,0x71 => A=0x00, F=0xB0
+
   std::uint8_t init_a = (system == gbemu::core::System::GBC) ? 0x11u : 0x01u;
   emit({0x3E, init_a}); // A
   emit({0x06, 0x00}); // B
@@ -1270,6 +1983,24 @@ bool contains_subsequence_bytes(const std::string& data, const std::vector<std::
   return false;
 }
 
+bool contains_word_token_ci(const std::string& lower, const std::string& token) {
+  if (token.empty() || lower.size() < token.size()) {
+    return false;
+  }
+  std::size_t pos = lower.find(token);
+  while (pos != std::string::npos) {
+    bool left_ok = (pos == 0) || !std::isalnum(static_cast<unsigned char>(lower[pos - 1]));
+    std::size_t right = pos + token.size();
+    bool right_ok = (right >= lower.size()) ||
+                    !std::isalnum(static_cast<unsigned char>(lower[right]));
+    if (left_ok && right_ok) {
+      return true;
+    }
+    pos = lower.find(token, pos + 1);
+  }
+  return false;
+}
+
 ConformanceJudge conformance_judge_for_path(const std::string& path) {
   std::string lower = to_lower(path);
   if (lower.find("blargg") != std::string::npos) {
@@ -1277,6 +2008,12 @@ ConformanceJudge conformance_judge_for_path(const std::string& path) {
   }
   if (lower.find("mooneye") != std::string::npos) {
     return ConformanceJudge::Mooneye;
+  }
+  if (lower.find(".gba") != std::string::npos &&
+      (lower.find("mgba") != std::string::npos ||
+       lower.find("gba-tests") != std::string::npos ||
+       lower.find("testsuite") != std::string::npos)) {
+    return ConformanceJudge::GbaText;
   }
   return ConformanceJudge::None;
 }
@@ -1318,6 +2055,23 @@ ConformanceVerdict evaluate_mooneye_verdict(const std::string& serial_bytes,
   return ConformanceVerdict::Unknown;
 }
 
+ConformanceVerdict evaluate_gba_text_verdict(const std::string& serial_bytes) {
+  std::string lower = to_lower(serial_bytes);
+  if (lower.find("not ok") != std::string::npos ||
+      contains_word_token_ci(lower, "fail") ||
+      contains_word_token_ci(lower, "failed") ||
+      contains_word_token_ci(lower, "error")) {
+    return ConformanceVerdict::Fail;
+  }
+  if (contains_word_token_ci(lower, "pass") ||
+      contains_word_token_ci(lower, "passed") ||
+      contains_word_token_ci(lower, "success") ||
+      contains_word_token_ci(lower, "ok")) {
+    return ConformanceVerdict::Pass;
+  }
+  return ConformanceVerdict::Unknown;
+}
+
 ConformanceVerdict evaluate_conformance_verdict(const std::string& rom_path,
                                                 const std::string& serial_bytes,
                                                 const gbemu::core::EmulatorCore& core) {
@@ -1327,6 +2081,9 @@ ConformanceVerdict evaluate_conformance_verdict(const std::string& rom_path,
   }
   if (judge == ConformanceJudge::Mooneye) {
     return evaluate_mooneye_verdict(serial_bytes, core);
+  }
+  if (judge == ConformanceJudge::GbaText) {
+    return evaluate_gba_text_verdict(serial_bytes);
   }
   return ConformanceVerdict::Unknown;
 }
@@ -1454,6 +2211,9 @@ void test_conformance_verdict_detection() {
   expect(conformance_judge_for_path("Test-Games/mooneye/acceptance/div_timing.gb") ==
              ConformanceJudge::Mooneye,
          "Conformance judge should classify mooneye ROM paths");
+  expect(conformance_judge_for_path("Test-Games/Conformance/GBA/mgba/cpu-test.gba") ==
+             ConformanceJudge::GbaText,
+         "Conformance judge should classify GBA text-verdict ROM paths");
 
   expect(evaluate_blargg_verdict("CPU TESTS\nPassed\n") == ConformanceVerdict::Pass,
          "Blargg verdict detector should parse pass text");
@@ -1474,6 +2234,13 @@ void test_conformance_verdict_detection() {
   std::string mooneye_fail(6, static_cast<char>(0x42));
   expect(evaluate_mooneye_verdict(mooneye_fail, dummy) == ConformanceVerdict::Fail,
          "Mooneye verdict detector should parse repeated 0x42 fail serial sequence");
+
+  expect(evaluate_gba_text_verdict("[PASS] all tests\n") == ConformanceVerdict::Pass,
+         "GBA text verdict detector should parse pass markers");
+  expect(evaluate_gba_text_verdict("suite failed: case 7\n") == ConformanceVerdict::Fail,
+         "GBA text verdict detector should parse fail markers");
+  expect(evaluate_gba_text_verdict("running...\n") == ConformanceVerdict::Unknown,
+         "GBA text verdict detector should remain unknown without explicit verdict tokens");
 }
 
 void run_conformance_harness() {
@@ -1534,18 +2301,18 @@ void run_conformance_harness() {
 
   std::unordered_map<std::string, ConformanceCaseStats> case_stats;
   std::unordered_map<std::string, ConformancePackStats> pack_stats;
+  bool debug_trace = parse_env_bool("GBEMU_CONFORMANCE_DEBUG_TRACE", false);
+  bool auto_real_boot_mooneye = parse_env_bool("GBEMU_CONFORMANCE_MOONEYE_REAL_BOOT", true);
+  int real_boot_min_frames = parse_env_int("GBEMU_CONFORMANCE_REAL_BOOT_MIN_FRAMES").value_or(1200);
+  if (real_boot_min_frames <= 0) {
+    real_boot_min_frames = 1200;
+  }
 
   for (const ConformanceCase& test_case : cases) {
     ConformanceCaseStats stats;
     std::optional<std::vector<std::uint8_t>> fallback_boot_rom = load_default_boot_rom(test_case.system);
     if (test_case.system == gbemu::core::System::GBA && !fallback_boot_rom.has_value()) {
       std::cout << "Conformance " << test_case.name << ": missing GBA BIOS, skipping.\n";
-      continue;
-    }
-    std::vector<std::uint8_t> boot_rom = build_conformance_boot_rom(test_case.system, fallback_boot_rom);
-    if (boot_rom.empty()) {
-      std::cout << "Conformance " << test_case.name
-                << ": failed to build boot ROM for system, skipping.\n";
       continue;
     }
     int selected = 0;
@@ -1576,10 +2343,24 @@ void run_conformance_harness() {
         continue;
       }
 
+      ConformanceJudge judge = conformance_judge_for_path(full);
+      bool prefer_real_boot = auto_real_boot_mooneye && judge == ConformanceJudge::Mooneye;
+      std::vector<std::uint8_t> boot_rom =
+          build_conformance_boot_rom(test_case.system, fallback_boot_rom, prefer_real_boot);
+      if (boot_rom.empty()) {
+        ++stats.failed;
+        ++stats.load_errors;
+        expect(false, "Conformance boot ROM unavailable: " + full);
+        continue;
+      }
+
       ++selected;
       ++stats.executed;
       gbemu::core::EmulatorCore core;
       core.set_system(test_case.system);
+      if (debug_trace && test_case.system != gbemu::core::System::GBA) {
+        core.set_cpu_trace_enabled(true);
+      }
       if (test_case.system == gbemu::core::System::GBA && test_case.gba_fastboot) {
         core.set_gba_fastboot(true);
       }
@@ -1593,8 +2374,11 @@ void run_conformance_harness() {
 
       std::string serial_bytes;
       ConformanceVerdict verdict = ConformanceVerdict::Unknown;
-      ConformanceJudge judge = conformance_judge_for_path(full);
-      for (int i = 0; i < frame_budget && !core.cpu_faulted(); ++i) {
+      int per_rom_budget = frame_budget;
+      if (prefer_real_boot && per_rom_budget < real_boot_min_frames) {
+        per_rom_budget = real_boot_min_frames;
+      }
+      for (int i = 0; i < per_rom_budget && !core.cpu_faulted(); ++i) {
         core.step_frame();
         serial_bytes += core.take_serial_output();
         verdict = evaluate_conformance_verdict(full, serial_bytes, core);
@@ -1615,6 +2399,29 @@ void run_conformance_harness() {
       } else if (verdict == ConformanceVerdict::Fail) {
         ++stats.failed;
         std::cout << "Conformance fail signal: " << full << "\n";
+        if (debug_trace) {
+          gbemu::core::Cpu::Registers regs = core.gb_cpu_regs();
+          std::cout << "Conformance debug fail verdict: " << full
+                    << " serial_bytes=" << serial_bytes.size()
+                    << " pc=0x" << std::hex << core.cpu_pc()
+                    << " op=0x" << static_cast<int>(core.cpu_opcode())
+                    << " halted=" << (core.gb_cpu_halted() ? "1" : "0")
+                    << " b=0x" << static_cast<int>(regs.b)
+                    << " c=0x" << static_cast<int>(regs.c)
+                    << " d=0x" << static_cast<int>(regs.d)
+                    << " e=0x" << static_cast<int>(regs.e)
+                    << " h=0x" << static_cast<int>(regs.h)
+                    << " l=0x" << static_cast<int>(regs.l)
+                    << std::dec << "\n";
+          std::cout << "Conformance debug serial: " << serial_debug_text(serial_bytes) << "\n";
+          auto trace = core.cpu_trace();
+          std::cout << "Conformance trace tail:";
+          for (const auto& entry : trace) {
+            std::cout << " [pc=0x" << std::hex << entry.pc
+                      << " op=0x" << static_cast<int>(entry.opcode) << std::dec << "]";
+          }
+          std::cout << "\n";
+        }
       } else if (judge != ConformanceJudge::None) {
         ++stats.unknown;
         gbemu::core::Cpu::Registers regs = core.gb_cpu_regs();
@@ -1630,6 +2437,16 @@ void run_conformance_harness() {
                   << " h=0x" << static_cast<int>(regs.h)
                   << " l=0x" << static_cast<int>(regs.l)
                   << std::dec << "\n";
+        std::cout << "Conformance debug serial: " << serial_debug_text(serial_bytes) << "\n";
+        if (debug_trace) {
+          auto trace = core.cpu_trace();
+          std::cout << "Conformance trace tail:";
+          for (const auto& entry : trace) {
+            std::cout << " [pc=0x" << std::hex << entry.pc
+                      << " op=0x" << static_cast<int>(entry.opcode) << std::dec << "]";
+          }
+          std::cout << "\n";
+        }
       } else {
         ++stats.unknown;
       }
@@ -1706,6 +2523,21 @@ std::string to_lower(std::string value) {
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   }
   return value;
+}
+
+std::string serial_debug_text(const std::string& serial_bytes) {
+  std::string out;
+  out.reserve(serial_bytes.size());
+  for (unsigned char c : serial_bytes) {
+    if (c == '\n' || c == '\r' || c == '\t') {
+      out.push_back(static_cast<char>(c));
+    } else if (c >= 32 && c <= 126) {
+      out.push_back(static_cast<char>(c));
+    } else {
+      out.push_back('.');
+    }
+  }
+  return out;
 }
 
 bool is_rom_extension(const std::filesystem::path& path) {
@@ -1816,14 +2648,29 @@ int main() {
   test_boot_rom_size();
   test_gb_serial_transfer_capture();
   test_gb_ei_delay_before_interrupt_service();
+  test_gb_interrupt_register_unused_bits();
+  test_gb_halt_ime0_resume_executes_next_instruction();
+  test_gb_stat_irq_blocking_across_mode0_to_mode1();
+  test_gb_cb_bit_hl_timing();
   test_gba_state_roundtrip();
   test_gba_cpu_swp_and_swpb();
   test_gba_cpu_arm_long_multiply();
   test_gba_cpu_arm_load_store_rrx_offset();
+  test_gba_waitcnt_nseq_seq_fetch_cycles();
+  test_gba_prefetch_reduces_sequential_fetch_penalty();
+  test_gba_prefetch_pipeline_refill_on_branch_and_mode_switch();
+  test_gba_prefetch_stream_break_on_gamepak_data_access();
+  test_gba_waitcnt_write_flushes_prefetch_stream();
+  test_gba_mgba_debug_output_capture();
   test_gba_hle_swi_math_and_affine();
   test_gba_hle_swi_wait_and_memcpy_paths();
+  test_gba_hle_swi_halt_stop_paths();
+  test_gba_hle_swi_trig_decompress_and_bios_fallback();
   test_gba_timer_reload_shadow_and_cascade();
   test_gba_dma_repeat_irq_and_start_modes();
+  test_gba_irq_ack_priority_and_lr_entry();
+  test_gba_irq_register_masking();
+  test_gba_irq_thumb_origin_lr_pipeline();
   test_gba_ppu_mode5_bitmap_pages();
   test_gba_ppu_window_effect_mask();
   test_gba_flash_protocol();

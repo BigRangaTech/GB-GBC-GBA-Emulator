@@ -27,6 +27,7 @@ class GbaCore {
   bool cpu_faulted() const { return cpu_.faulted(); }
   const std::string& cpu_fault_reason() const { return cpu_.fault_reason(); }
   std::uint32_t cpu_pc() const { return cpu_.pc(); }
+  std::string take_debug_output() { return bus_.take_debug_output(); }
   bool has_battery() const { return bus_.has_battery(); }
   bool has_ram() const { return bus_.has_ram(); }
   std::vector<std::uint8_t> ram_data() const { return bus_.save_data(); }
@@ -65,13 +66,19 @@ class GbaCore {
   void debug_write32(std::uint32_t address, std::uint32_t value) { bus_.write32(address, value); }
   std::uint16_t debug_read16(std::uint32_t address) const { return bus_.read16(address); }
   std::uint32_t debug_read32(std::uint32_t address) const { return bus_.read32(address); }
+  void debug_set_if_bits(std::uint16_t mask) { bus_.set_if_bits(mask); }
   void debug_sync_timers() { sync_timers_from_io(); }
   void debug_step_timers(int cycles) { step_timers(cycles); }
   void debug_step_dma() { step_dma(); }
   void debug_trigger_dma(int timing) { trigger_dma(timing); }
   void debug_render_line(int y) { render_line(y); }
+  int debug_step_cpu_instruction();
   std::uint32_t debug_cpu_reg(int index) const { return cpu_.reg(index); }
   void debug_set_cpu_reg(int index, std::uint32_t value) { cpu_.set_reg(index, value); }
+  std::uint32_t debug_cpu_cpsr() const { return cpu_.cpsr(); }
+  void debug_set_cpu_cpsr(std::uint32_t value) { cpu_.set_cpsr(value); }
+  bool debug_halted() const { return halted_; }
+  void debug_service_interrupts() { service_interrupts(); }
   bool debug_handle_swi_hle(std::uint32_t pc_before,
                             bool thumb_before,
                             std::uint32_t op_before,

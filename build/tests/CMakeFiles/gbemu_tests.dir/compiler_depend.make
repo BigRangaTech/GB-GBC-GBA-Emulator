@@ -102,6 +102,7 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/bits/shared_ptr_base.h \
   /usr/include/c++/15/bits/sstream.tcc \
   /usr/include/c++/15/bits/std_abs.h \
+  /usr/include/c++/15/bits/std_function.h \
   /usr/include/c++/15/bits/std_mutex.h \
   /usr/include/c++/15/bits/stl_algo.h \
   /usr/include/c++/15/bits/stl_algobase.h \
@@ -159,6 +160,7 @@ tests/CMakeFiles/gbemu_tests.dir/tests.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/c++/15/ext/type_traits.h \
   /usr/include/c++/15/filesystem \
   /usr/include/c++/15/fstream \
+  /usr/include/c++/15/functional \
   /usr/include/c++/15/initializer_list \
   /usr/include/c++/15/iomanip \
   /usr/include/c++/15/ios \
@@ -453,6 +455,8 @@ common/libgbemu_common.a:
 
 /usr/include/x86_64-linux-gnu/bits/time64.h:
 
+/usr/include/x86_64-linux-gnu/bits/thread-shared-types.h:
+
 /usr/include/c++/15/bits/uniform_int_dist.h:
 
 /usr/include/features-time64.h:
@@ -524,10 +528,6 @@ common/libgbemu_common.a:
 /usr/include/x86_64-linux-gnu/c++/15/bits/c++locale.h:
 
 /usr/include/c++/15/pstl/glue_memory_defs.h:
-
-/usr/include/c++/15/bits/unordered_set.h:
-
-/home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/os_defines.h:
 
@@ -701,6 +701,10 @@ common/libgbemu_common.a:
 
 /usr/include/alloca.h:
 
+/home/jessie/Documents/GB-GBC-GBA-Emulator/core/core.h:
+
+/usr/include/c++/15/bits/unordered_set.h:
+
 /usr/include/x86_64-linux-gnu/c++/15/bits/ctype_inline.h:
 
 /usr/include/c++/15/bits/move.h:
@@ -733,7 +737,15 @@ common/libgbemu_common.a:
 
 /usr/include/c++/15/bits/char_traits.h:
 
+/usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h:
+
+/usr/include/c++/15/concepts:
+
+/usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
+
 /usr/include/x86_64-linux-gnu/bits/local_lim.h:
+
+/usr/include/c++/15/bits/std_function.h:
 
 /usr/include/c++/15/bits/codecvt.h:
 
@@ -839,12 +851,6 @@ core/libgbemu_core.a:
 
 /usr/include/c++/15/codecvt:
 
-/usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h:
-
-/usr/include/c++/15/concepts:
-
-/usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
-
 /usr/include/c++/15/cstdint:
 
 /usr/include/c++/15/cstdio:
@@ -872,6 +878,8 @@ core/libgbemu_core.a:
 /usr/include/c++/15/bits/requires_hosted.h:
 
 /usr/include/c++/15/filesystem:
+
+/usr/include/c++/15/functional:
 
 /usr/include/c++/15/ios:
 
@@ -1024,5 +1032,3 @@ core/libgbemu_core.a:
 /usr/include/c++/15/bits/cxxabi_init_exception.h:
 
 /usr/include/x86_64-linux-gnu/bits/syscall.h:
-
-/usr/include/x86_64-linux-gnu/bits/thread-shared-types.h:

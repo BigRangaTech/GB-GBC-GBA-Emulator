@@ -19,10 +19,13 @@ constexpr std::uint32_t kRegVcount = 0x04000006;
 constexpr std::uint32_t kRegIe = 0x04000200;
 constexpr std::uint32_t kRegIf = 0x04000202;
 constexpr std::uint32_t kRegIme = 0x04000208;
+constexpr std::uint16_t kIrqValidMask = 0x3FFF;
 constexpr int kGbaLinesPerFrame = 228;
 constexpr int kGbaVblankStart = 160;
 constexpr int kGbaVisibleCycles = 960;
 constexpr int kGbaCyclesPerLine = 1232;
+constexpr std::uint32_t kSwiDecompMaxOutput = 8u * 1024u * 1024u;
+constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 6.28318530717958647692;
 
 bool in_window_range(int value, int start, int end) {
@@ -127,6 +130,128 @@ void calc_affine_matrix(std::int16_t sx,
   *pb_out = static_cast<std::int16_t>(pb);
   *pc_out = static_cast<std::int16_t>(pc);
   *pd_out = static_cast<std::int16_t>(pd);
+}
+
+bool bios_has_real_code(const std::vector<std::uint8_t>& bios) {
+  for (std::uint8_t value : bios) {
+    if (value != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::uint16_t rad_to_bios_angle(double radians) {
+  double scaled = std::lround(radians * (32768.0 / kPi));
+  std::int64_t value = static_cast<std::int64_t>(scaled);
+  value %= 65536;
+  if (value < 0) {
+    value += 65536;
+  }
+  return static_cast<std::uint16_t>(value);
+}
+
+bool decode_lz77(const GbaBus& bus,
+                 std::uint32_t src,
+                 std::vector<std::uint8_t>* out) {
+  if (!out) {
+    return false;
+  }
+  std::uint8_t header = bus.read8(src);
+  if ((header & 0xF0u) != 0x10u) {
+    return false;
+  }
+  std::uint32_t out_size = static_cast<std::uint32_t>(bus.read8(src + 1u)) |
+                           (static_cast<std::uint32_t>(bus.read8(src + 2u)) << 8u) |
+                           (static_cast<std::uint32_t>(bus.read8(src + 3u)) << 16u);
+  if (out_size == 0 || out_size > kSwiDecompMaxOutput) {
+    return false;
+  }
+
+  out->assign(out_size, 0);
+  std::size_t out_pos = 0;
+  std::uint32_t in_pos = src + 4u;
+  while (out_pos < out->size()) {
+    std::uint8_t flags = bus.read8(in_pos++);
+    for (int bit = 7; bit >= 0 && out_pos < out->size(); --bit) {
+      if ((flags & (1u << bit)) == 0) {
+        (*out)[out_pos++] = bus.read8(in_pos++);
+      } else {
+        std::uint8_t b1 = bus.read8(in_pos++);
+        std::uint8_t b2 = bus.read8(in_pos++);
+        int length = static_cast<int>((b1 >> 4) & 0xFu) + 3;
+        int distance = static_cast<int>(((b1 & 0xFu) << 8) | b2) + 1;
+        if (distance <= 0 || static_cast<std::size_t>(distance) > out_pos) {
+          return false;
+        }
+        for (int i = 0; i < length && out_pos < out->size(); ++i) {
+          (*out)[out_pos] = (*out)[out_pos - static_cast<std::size_t>(distance)];
+          ++out_pos;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+bool decode_rl(const GbaBus& bus,
+               std::uint32_t src,
+               std::vector<std::uint8_t>* out) {
+  if (!out) {
+    return false;
+  }
+  std::uint8_t header = bus.read8(src);
+  if ((header & 0xF0u) != 0x30u) {
+    return false;
+  }
+  std::uint32_t out_size = static_cast<std::uint32_t>(bus.read8(src + 1u)) |
+                           (static_cast<std::uint32_t>(bus.read8(src + 2u)) << 8u) |
+                           (static_cast<std::uint32_t>(bus.read8(src + 3u)) << 16u);
+  if (out_size == 0 || out_size > kSwiDecompMaxOutput) {
+    return false;
+  }
+
+  out->assign(out_size, 0);
+  std::size_t out_pos = 0;
+  std::uint32_t in_pos = src + 4u;
+  while (out_pos < out->size()) {
+    std::uint8_t tag = bus.read8(in_pos++);
+    if (tag & 0x80u) {
+      int length = static_cast<int>(tag & 0x7Fu) + 3;
+      std::uint8_t value = bus.read8(in_pos++);
+      for (int i = 0; i < length && out_pos < out->size(); ++i) {
+        (*out)[out_pos++] = value;
+      }
+    } else {
+      int length = static_cast<int>(tag & 0x7Fu) + 1;
+      for (int i = 0; i < length && out_pos < out->size(); ++i) {
+        (*out)[out_pos++] = bus.read8(in_pos++);
+      }
+    }
+  }
+  return true;
+}
+
+void write_swi_output(GbaBus* bus,
+                      std::uint32_t dst,
+                      const std::vector<std::uint8_t>& data,
+                      bool vram_mode) {
+  if (!bus) {
+    return;
+  }
+  if (!vram_mode) {
+    for (std::size_t i = 0; i < data.size(); ++i) {
+      bus->write8(dst + static_cast<std::uint32_t>(i), data[i]);
+    }
+    return;
+  }
+  dst &= ~1u;
+  for (std::size_t i = 0; i < data.size(); i += 2) {
+    std::uint16_t lo = data[i];
+    std::uint16_t hi = (i + 1 < data.size()) ? static_cast<std::uint16_t>(data[i + 1]) : 0u;
+    bus->write16(dst + static_cast<std::uint32_t>(i),
+                 static_cast<std::uint16_t>(lo | (hi << 8u)));
+  }
 }
 
 } // namespace
@@ -335,6 +460,24 @@ void GbaCore::set_fastboot(bool enabled) {
   if (fastboot_enabled_) {
     fast_boot_to_rom();
   }
+}
+
+int GbaCore::debug_step_cpu_instruction() {
+  std::uint32_t pc_before = cpu_.pc();
+  bus_.set_bios_enabled(pc_before < 0x00004000u);
+  bus_.set_last_pc(pc_before);
+  bus_.begin_cpu_step();
+  int used = cpu_.step(&bus_);
+  if (used <= 0) {
+    bus_.finish_cpu_step(0);
+    return used;
+  }
+  used += bus_.finish_cpu_step(used);
+  step_timers(used);
+  step_dma();
+  step_ppu(used);
+  service_interrupts();
+  return used;
 }
 
 void GbaCore::serialize(std::vector<std::uint8_t>* out) const {
@@ -664,10 +807,13 @@ void GbaCore::step_frame() {
       return true;
     }
 
+    bus_.begin_cpu_step();
     int used = cpu_.step(&bus_);
     if (used <= 0) {
+      bus_.finish_cpu_step(0);
       return false;
     }
+    used += bus_.finish_cpu_step(used);
     auto_patch_tick(pc_before, cpu_.pc(), op_before, thumb_before);
     watchdog_tick(pc_before);
     step_timers(used);
@@ -1765,7 +1911,7 @@ void GbaCore::update_dispstat() {
 }
 
 void GbaCore::request_interrupt(int bit) {
-  if (bit < 0 || bit > 15) {
+  if (bit < 0 || bit > 13) {
     return;
   }
   bus_.set_if_bits(static_cast<std::uint16_t>(1u << bit));
@@ -1774,7 +1920,7 @@ void GbaCore::request_interrupt(int bit) {
 bool GbaCore::interrupt_pending() const {
   std::uint16_t ie = bus_.read_io16(kRegIe);
   std::uint16_t iflag = bus_.read_io16(kRegIf);
-  return (ie & iflag) != 0;
+  return (static_cast<std::uint16_t>(ie & iflag & kIrqValidMask)) != 0;
 }
 
 void GbaCore::service_interrupts() {
@@ -1787,9 +1933,24 @@ void GbaCore::service_interrupts() {
   }
   std::uint16_t ie = bus_.read_io16(kRegIe);
   std::uint16_t iflag = bus_.read_io16(kRegIf);
-  if ((ie & iflag) == 0) {
+  std::uint16_t pending = static_cast<std::uint16_t>(ie & iflag & kIrqValidMask);
+  if (pending == 0) {
     return;
   }
+  int irq_bit = 0;
+  for (; irq_bit < 14; ++irq_bit) {
+    if (pending & (1u << irq_bit)) {
+      break;
+    }
+  }
+  if (irq_bit >= 14) {
+    return;
+  }
+
+  std::uint16_t next_if =
+      static_cast<std::uint16_t>(iflag & ~(static_cast<std::uint16_t>(1u << irq_bit)));
+  bus_.write_io16_raw(kRegIf, next_if);
+
   std::uint32_t pc = cpu_.pc();
   // service_interrupts() runs between instructions in this core, so PC already
   // points at the next instruction to execute. BIOS IRQ return uses
@@ -1801,6 +1962,9 @@ void GbaCore::service_interrupts() {
   cpu_.set_thumb(false);
   cpu_.set_pc(0x00000018u);
   cpu_.set_irq_disable(true);
+  halted_ = false;
+  swi_wait_active_ = false;
+  swi_wait_mask_ = 0;
 }
 
 void GbaCore::watchdog_tick(std::uint32_t pc) {
@@ -1941,10 +2105,32 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     imm = op_before & 0x00FFFFFFu;
   }
 
-  if (imm != 0x04 && imm != 0x05 && imm != 0x06 && imm != 0x07 && imm != 0x08 &&
-      imm != 0x0B && imm != 0x0C && imm != 0x0E && imm != 0x0F) {
-    return false;
+  switch (imm) {
+    case 0x02:
+    case 0x03:
+    case 0x04:
+    case 0x05:
+    case 0x06:
+    case 0x07:
+    case 0x08:
+    case 0x09:
+    case 0x0A:
+    case 0x0B:
+    case 0x0C:
+    case 0x0E:
+    case 0x0F:
+    case 0x11:
+    case 0x12:
+    case 0x13:
+    case 0x14:
+    case 0x15:
+    case 0x16:
+      break;
+    default:
+      return false;
   }
+
+  bool real_bios_available = bios_has_real_code(bus_.bios());
 
   int hle_cycles = thumb_before ? 3 : 4;
   if (hle_swi_log_limit_ > 0 && hle_swi_log_count_ < hle_swi_log_limit_) {
@@ -1956,7 +2142,13 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
 
   std::uint16_t wait_mask = 0;
   bool clear_if = false;
-  if (imm == 0x05) {
+  if (imm == 0x02 || imm == 0x03) {
+    // Halt/Stop: keep compatibility by suspending CPU until an IRQ wakes it.
+    halted_ = true;
+    swi_wait_active_ = false;
+    swi_wait_mask_ = 0;
+    hle_cycles = 4;
+  } else if (imm == 0x05) {
     // VBlankIntrWait: wait for VBlank IRQ (bit 0).
     wait_mask = 0x0001u;
     clear_if = true;
@@ -1981,6 +2173,16 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
   } else if (imm == 0x08) {
     cpu_.set_reg(0, isqrt32(cpu_.reg(0)));
     hle_cycles = 34;
+  } else if (imm == 0x09) {
+    std::int32_t tangent = static_cast<std::int32_t>(cpu_.reg(0));
+    double value = static_cast<double>(tangent) / 65536.0;
+    cpu_.set_reg(0, rad_to_bios_angle(std::atan(value)));
+    hle_cycles = 32;
+  } else if (imm == 0x0A) {
+    std::int32_t y = static_cast<std::int32_t>(cpu_.reg(0));
+    std::int32_t x = static_cast<std::int32_t>(cpu_.reg(1));
+    cpu_.set_reg(0, rad_to_bios_angle(std::atan2(static_cast<double>(y), static_cast<double>(x))));
+    hle_cycles = 48;
   } else if (imm == 0x0B) {
     std::uint32_t src = cpu_.reg(0);
     std::uint32_t dst = cpu_.reg(1);
@@ -2113,6 +2315,33 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
       cost = 200000u;
     }
     hle_cycles = static_cast<int>(cost);
+  } else if (imm == 0x11 || imm == 0x12 || imm == 0x15 || imm == 0x16) {
+    std::uint32_t src = cpu_.reg(0);
+    std::uint32_t dst = cpu_.reg(1);
+    bool vram_mode = (imm == 0x12 || imm == 0x16);
+    bool lz_mode = (imm == 0x11 || imm == 0x12);
+    std::vector<std::uint8_t> decoded;
+    bool ok = lz_mode ? decode_lz77(bus_, src, &decoded) : decode_rl(bus_, src, &decoded);
+    if (!ok) {
+      if (real_bios_available) {
+        // Fall back to BIOS execution when available for malformed/unsupported streams.
+        return false;
+      }
+      decoded.clear();
+    } else {
+      write_swi_output(&bus_, dst, decoded, vram_mode);
+    }
+    std::uint64_t cost = 18u + static_cast<std::uint64_t>(decoded.size()) * (vram_mode ? 3u : 2u);
+    if (cost > 200000u) {
+      cost = 200000u;
+    }
+    hle_cycles = static_cast<int>(cost);
+  } else if (imm == 0x13 || imm == 0x14) {
+    // Huffman and differential filters are left to BIOS for now.
+    if (real_bios_available) {
+      return false;
+    }
+    hle_cycles = 8;
   }
 
   if (clear_if && wait_mask != 0) {

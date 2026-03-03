@@ -42,7 +42,9 @@ int Cpu::step() {
     if (service_interrupts()) {
       return current_cycles_;
     }
-    return 4;
+    if (halted_) {
+      return 4;
+    }
   }
 
   if (service_interrupts()) {
@@ -743,7 +745,8 @@ void Cpu::op_cb_prefix() {
     set_flag(Z, zero);
     set_flag(N, false);
     set_flag(H, true);
-    current_cycles_ = hl ? 16 : 8;
+    // BIT b,(HL) uses 12 cycles; other CB (HL) ops are 16.
+    current_cycles_ = hl ? 12 : 8;
     return;
   }
   if (opcode < 0xC0) {
@@ -1218,6 +1221,9 @@ bool Cpu::service_interrupts() {
   std::uint8_t pending = static_cast<std::uint8_t>(ie & iflags & 0x1F);
 
   if (pending == 0) {
+    if (!ime_ && halted_ && (iflags & 0x1F) != 0) {
+      halted_ = false;
+    }
     return false;
   }
 

@@ -1,6 +1,7 @@
 #include "gba_bus.h"
 
 #include <algorithm>
+#include <array>
 #include <iomanip>
 #include <iostream>
 
@@ -40,8 +41,14 @@ constexpr std::uint32_t kRegVcount = 0x04000006;
 constexpr std::uint32_t kRegKeyinput = 0x04000130;
 constexpr std::uint32_t kRegIe = 0x04000200;
 constexpr std::uint32_t kRegIme = 0x04000208;
+constexpr std::uint32_t kRegWaitcnt = 0x04000204;
 constexpr std::uint32_t kRegPostflg = 0x04000300;
 constexpr std::uint32_t kRegHaltcnt = 0x04000301;
+constexpr std::uint16_t kIrqWritableMask = 0x3FFF;
+constexpr std::uint32_t kMgbaDebugBase = 0x04FFF600;
+constexpr std::uint32_t kMgbaDebugSize = 0x200;
+constexpr std::uint32_t kMgbaDebugFlags = 0x04FFF700;
+constexpr std::uint32_t kMgbaDebugEnable = 0x04FFF780;
 
 bool palette_offset_for(std::uint32_t address, std::uint32_t* offset) {
   if (!offset || address < kPaletteBase || address >= kPaletteBase + kPaletteMirrorSize) {
@@ -173,7 +180,172 @@ bool GbaBus::load(const std::vector<std::uint8_t>& rom,
   eeprom_cmd_bits_.clear();
   eeprom_read_bits_.clear();
   eeprom_read_index_ = 0;
+  mgba_debug_io_.assign(kMgbaDebugSize, 0);
+  mgba_debug_enabled_ = false;
+  mgba_debug_output_.clear();
+  timing_active_ = false;
+  pending_timing_cycles_ = 0;
+  fetch_stream_active_ = false;
+  fetch_expected_addr_ = 0;
+  prefetch_halfwords_ = 0;
   return true;
+}
+
+void GbaBus::begin_cpu_step() {
+  timing_active_ = true;
+  pending_timing_cycles_ = 0;
+  if (!prefetch_enabled()) {
+    prefetch_halfwords_ = 0;
+  }
+}
+
+int GbaBus::finish_cpu_step(int base_cycles) {
+  if (base_cycles > 0) {
+    refill_prefetch(base_cycles);
+  }
+  int extra = pending_timing_cycles_;
+  pending_timing_cycles_ = 0;
+  timing_active_ = false;
+  return extra;
+}
+
+bool GbaBus::is_gamepak_address(std::uint32_t address) const {
+  return address >= kRomBase && address <= kRomEnd;
+}
+
+int GbaBus::sram_wait_cycles() const {
+  static constexpr std::array<int, 4> kSramWait = {4, 3, 2, 8};
+  std::uint16_t waitcnt = read_io16(kRegWaitcnt);
+  return kSramWait[waitcnt & 0x3u];
+}
+
+bool GbaBus::prefetch_enabled() const {
+  return (read_io16(kRegWaitcnt) & (1u << 14)) != 0;
+}
+
+int GbaBus::gamepak_wait_cycles_halfword(std::uint32_t address, bool sequential) const {
+  if (!is_gamepak_address(address)) {
+    return 0;
+  }
+
+  int ws = 0;
+  if (address >= 0x0A000000u) {
+    ws = (address >= 0x0C000000u) ? 2 : 1;
+  }
+  if (ws < 0) {
+    ws = 0;
+  } else if (ws > 2) {
+    ws = 2;
+  }
+
+  static constexpr std::array<int, 4> kNseqWait = {4, 3, 2, 8};
+  static constexpr std::array<std::array<int, 2>, 3> kSeqWait = {
+      std::array<int, 2>{2, 1}, // WS0
+      std::array<int, 2>{4, 1}, // WS1
+      std::array<int, 2>{8, 1}, // WS2
+  };
+
+  std::uint16_t waitcnt = read_io16(kRegWaitcnt);
+  int nseq_index = (waitcnt >> (4 + ws * 3)) & 0x3;
+  int seq_index = (waitcnt >> (6 + ws * 3)) & 0x1;
+  return sequential ? kSeqWait[static_cast<std::size_t>(ws)][static_cast<std::size_t>(seq_index)]
+                    : kNseqWait[static_cast<std::size_t>(nseq_index)];
+}
+
+int GbaBus::gamepak_wait_cycles(std::uint32_t address, int bytes, bool sequential_first) const {
+  if (bytes <= 0 || !is_gamepak_address(address)) {
+    return 0;
+  }
+  int halfwords = (bytes + 1) / 2;
+  int cycles = 0;
+  for (int i = 0; i < halfwords; ++i) {
+    bool sequential = sequential_first || i > 0;
+    cycles += gamepak_wait_cycles_halfword(address + static_cast<std::uint32_t>(i * 2), sequential);
+  }
+  return cycles;
+}
+
+void GbaBus::refill_prefetch(int cycles) const {
+  if (cycles <= 0) {
+    return;
+  }
+  if (!prefetch_enabled() || !fetch_stream_active_) {
+    prefetch_halfwords_ = 0;
+    return;
+  }
+
+  constexpr int kPrefetchDepthHalfwords = 8;
+  int budget = cycles;
+  while (prefetch_halfwords_ < kPrefetchDepthHalfwords && budget > 0) {
+    std::uint32_t next_addr =
+        fetch_expected_addr_ + static_cast<std::uint32_t>(prefetch_halfwords_ * 2);
+    if (!is_gamepak_address(next_addr)) {
+      fetch_stream_active_ = false;
+      prefetch_halfwords_ = 0;
+      break;
+    }
+    int cost = gamepak_wait_cycles_halfword(next_addr, true);
+    if (cost <= 0 || budget < cost) {
+      break;
+    }
+    budget -= cost;
+    ++prefetch_halfwords_;
+  }
+}
+
+void GbaBus::account_data_access_timing(std::uint32_t address, int bytes) const {
+  if (!timing_active_ || bytes <= 0) {
+    return;
+  }
+  if (is_gamepak_address(address)) {
+    // Any CPU data access on the Game Pak bus breaks the instruction-fetch stream
+    // and invalidates queued prefetch data.
+    fetch_stream_active_ = false;
+    prefetch_halfwords_ = 0;
+    pending_timing_cycles_ += gamepak_wait_cycles(address, bytes, false);
+    return;
+  }
+  if (address >= kSramBase && address < kSramBase + kSramSize) {
+    pending_timing_cycles_ += sram_wait_cycles() * std::max(1, bytes);
+  }
+}
+
+void GbaBus::account_fetch_timing(std::uint32_t address, int bytes) const {
+  if (!timing_active_ || bytes <= 0) {
+    return;
+  }
+  if (!is_gamepak_address(address)) {
+    fetch_stream_active_ = false;
+    prefetch_halfwords_ = 0;
+    return;
+  }
+
+  bool stream_sequential = fetch_stream_active_ && (address == fetch_expected_addr_);
+  if (!stream_sequential) {
+    fetch_stream_active_ = true;
+    fetch_expected_addr_ = address;
+    prefetch_halfwords_ = 0;
+  }
+
+  int needed_halfwords = (bytes + 1) / 2;
+  int queued = 0;
+  if (prefetch_enabled()) {
+    queued = std::min(prefetch_halfwords_, needed_halfwords);
+    prefetch_halfwords_ -= queued;
+    needed_halfwords -= queued;
+  } else {
+    prefetch_halfwords_ = 0;
+  }
+
+  for (int i = 0; i < needed_halfwords; ++i) {
+    bool sequential = stream_sequential || queued > 0 || i > 0;
+    std::uint32_t fetch_addr =
+        address + static_cast<std::uint32_t>((queued + i) * 2);
+    pending_timing_cycles_ += gamepak_wait_cycles_halfword(fetch_addr, sequential);
+    stream_sequential = true;
+  }
+
+  fetch_expected_addr_ = address + static_cast<std::uint32_t>(bytes);
 }
 
 bool GbaBus::is_eeprom_address(std::uint32_t address) const {
@@ -645,6 +817,61 @@ bool GbaBus::take_halt_request(bool* stop) {
   return true;
 }
 
+std::string GbaBus::take_debug_output() {
+  std::string out;
+  out.swap(mgba_debug_output_);
+  return out;
+}
+
+bool GbaBus::is_mgba_debug_address(std::uint32_t address) const {
+  return address >= kMgbaDebugBase && address < (kMgbaDebugBase + kMgbaDebugSize);
+}
+
+void GbaBus::flush_mgba_debug_string() {
+  if (!mgba_debug_enabled_ || mgba_debug_io_.empty()) {
+    return;
+  }
+  constexpr std::size_t kStringOffset = 0x000;
+  constexpr std::size_t kStringLimit = 0x100;
+  std::string text;
+  for (std::size_t i = 0; i < kStringLimit && (kStringOffset + i) < mgba_debug_io_.size(); ++i) {
+    std::uint8_t c = mgba_debug_io_[kStringOffset + i];
+    if (c == 0) {
+      break;
+    }
+    text.push_back(static_cast<char>(c));
+  }
+  if (text.empty()) {
+    return;
+  }
+  if (mgba_debug_output_.size() + text.size() + 1 > 64 * 1024) {
+    mgba_debug_output_.erase(0, mgba_debug_output_.size() - 32 * 1024);
+  }
+  mgba_debug_output_ += text;
+  mgba_debug_output_.push_back('\n');
+}
+
+void GbaBus::handle_mgba_debug_write(std::uint32_t address, std::uint8_t value) {
+  if (!is_mgba_debug_address(address) || mgba_debug_io_.empty()) {
+    return;
+  }
+  std::uint32_t offset = address - kMgbaDebugBase;
+  mgba_debug_io_[offset] = value;
+
+  if (address == kMgbaDebugEnable + 1u) {
+    std::uint16_t enable =
+        static_cast<std::uint16_t>(mgba_debug_io_[kMgbaDebugEnable - kMgbaDebugBase] |
+                                   (static_cast<std::uint16_t>(
+                                       mgba_debug_io_[kMgbaDebugEnable - kMgbaDebugBase + 1u])
+                                    << 8));
+    mgba_debug_enabled_ = (enable == 0xC0DEu);
+    return;
+  }
+  if (address == kMgbaDebugFlags) {
+    flush_mgba_debug_string();
+  }
+}
+
 void GbaBus::log_io_write(std::uint32_t address, std::uint32_t value, int bits) {
   if (!trace_io_ || trace_io_limit_ <= 0) {
     return;
@@ -777,6 +1004,10 @@ void GbaBus::write8_internal(std::uint32_t address,
     halt_requested_ = true;
     stop_requested_ = (value & 0x80u) != 0;
   }
+  if (is_mgba_debug_address(address)) {
+    handle_mgba_debug_write(address, value);
+    return;
+  }
   if (address >= kEwramBase && address < kEwramBase + kEwramMirrorSize) {
     std::uint32_t offset = (address - kEwramBase) & (kEwramSize - 1u);
     ewram_[offset] = value;
@@ -792,11 +1023,21 @@ void GbaBus::write8_internal(std::uint32_t address,
       std::uint16_t cur = read_io16(kIfAddr);
       std::uint16_t mask = (address == kIfAddr) ? value
                                                 : static_cast<std::uint16_t>(value << 8);
+      mask = static_cast<std::uint16_t>(mask & kIrqWritableMask);
       std::uint16_t next = static_cast<std::uint16_t>(cur & ~mask);
       write_io16_raw(kIfAddr, next);
       return;
     }
     write_mem(io_, address, kIoBase, value);
+    std::uint32_t io_halfword = address & ~1u;
+    if (io_halfword == kRegIe || io_halfword == kRegIme) {
+      std::uint16_t cur = read_io16(io_halfword);
+      write_io16_raw(io_halfword, cur);
+    }
+    if (address == kRegWaitcnt || address == (kRegWaitcnt + 1)) {
+      fetch_stream_active_ = false;
+      prefetch_halfwords_ = 0;
+    }
     return;
   }
   if (address >= kPaletteBase && address < kPaletteBase + kPaletteMirrorSize) {
@@ -852,7 +1093,10 @@ void GbaBus::write8_internal(std::uint32_t address,
 
 std::uint8_t GbaBus::read8_internal(std::uint32_t address, bool allow_log) const {
   std::uint8_t value = 0xFF;
-  if (bios_enabled_ && address < kBiosBase + kBiosSize) {
+  if (is_mgba_debug_address(address) && !mgba_debug_io_.empty()) {
+    std::uint32_t offset = address - kMgbaDebugBase;
+    value = mgba_debug_io_[offset];
+  } else if (bios_enabled_ && address < kBiosBase + kBiosSize) {
     value = read_mem(bios_, address, kBiosBase);
   } else if (address >= kEwramBase && address < kEwramBase + kEwramMirrorSize) {
     std::uint32_t offset = (address - kEwramBase) & (kEwramSize - 1u);
@@ -907,10 +1151,11 @@ std::uint8_t GbaBus::read8_internal(std::uint32_t address, bool allow_log) const
 std::uint8_t GbaBus::read8(std::uint32_t address) const {
   std::uint8_t value = read8_internal(address, true);
   log_watchpoint(address, value, 8, false);
+  account_data_access_timing(address, 1);
   return value;
 }
 
-std::uint16_t GbaBus::read16(std::uint32_t address) const {
+std::uint16_t GbaBus::read16_no_timing(std::uint32_t address) const {
   std::uint32_t aligned = address & ~1u;
   if (is_eeprom_address(aligned)) {
     std::uint16_t value = read_eeprom16(aligned);
@@ -932,7 +1177,19 @@ std::uint16_t GbaBus::read16(std::uint32_t address) const {
   return value;
 }
 
-std::uint32_t GbaBus::read32(std::uint32_t address) const {
+std::uint16_t GbaBus::read16(std::uint32_t address) const {
+  std::uint16_t value = read16_no_timing(address);
+  account_data_access_timing(address, 2);
+  return value;
+}
+
+std::uint16_t GbaBus::fetch16(std::uint32_t address) {
+  std::uint16_t value = read16_no_timing(address);
+  account_fetch_timing(address, 2);
+  return value;
+}
+
+std::uint32_t GbaBus::read32_no_timing(std::uint32_t address) const {
   std::uint32_t aligned = address & ~3u;
   if (is_eeprom_address(aligned)) {
     std::uint32_t lo = read_eeprom16(aligned);
@@ -957,6 +1214,18 @@ std::uint32_t GbaBus::read32(std::uint32_t address) const {
   }
   log_io_read(address, value, 32);
   log_watchpoint(address, value, 32, false);
+  return value;
+}
+
+std::uint32_t GbaBus::read32(std::uint32_t address) const {
+  std::uint32_t value = read32_no_timing(address);
+  account_data_access_timing(address, 4);
+  return value;
+}
+
+std::uint32_t GbaBus::fetch32(std::uint32_t address) {
+  std::uint32_t value = read32_no_timing(address);
+  account_fetch_timing(address, 4);
   return value;
 }
 
@@ -1036,6 +1305,7 @@ void GbaBus::write8(std::uint32_t address, std::uint8_t value) {
   log_video_io_write(address, value, 8);
   log_watchpoint(address, value, 8, true);
   write8_internal(address, value, true, true);
+  account_data_access_timing(address, 1);
 }
 
 void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
@@ -1045,16 +1315,19 @@ void GbaBus::write16(std::uint32_t address, std::uint16_t value) {
   std::uint32_t aligned = address & ~1u;
   if (is_eeprom_address(aligned)) {
     write_eeprom16(aligned, value);
+    account_data_access_timing(address, 2);
     return;
   }
   if (aligned == kIfAddr) {
     std::uint16_t cur = read_io16(kIfAddr);
     std::uint16_t next = static_cast<std::uint16_t>(cur & ~value);
     write_io16_raw(kIfAddr, next);
+    account_data_access_timing(address, 2);
     return;
   }
   write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false, false);
   write8_internal(aligned + 1, static_cast<std::uint8_t>(value >> 8), false, false);
+  account_data_access_timing(address, 2);
 }
 
 void GbaBus::write32(std::uint32_t address, std::uint32_t value) {
@@ -1065,12 +1338,14 @@ void GbaBus::write32(std::uint32_t address, std::uint32_t value) {
   if (is_eeprom_address(aligned)) {
     write_eeprom16(aligned, static_cast<std::uint16_t>(value & 0xFFFFu));
     write_eeprom16(aligned + 2, static_cast<std::uint16_t>((value >> 16) & 0xFFFFu));
+    account_data_access_timing(address, 4);
     return;
   }
   write8_internal(aligned, static_cast<std::uint8_t>(value & 0xFF), false, false);
   write8_internal(aligned + 1, static_cast<std::uint8_t>((value >> 8) & 0xFF), false, false);
   write8_internal(aligned + 2, static_cast<std::uint8_t>((value >> 16) & 0xFF), false, false);
   write8_internal(aligned + 3, static_cast<std::uint8_t>((value >> 24) & 0xFF), false, false);
+  account_data_access_timing(address, 4);
 }
 
 std::uint16_t GbaBus::read_io16(std::uint32_t address) const {
@@ -1080,12 +1355,24 @@ std::uint16_t GbaBus::read_io16(std::uint32_t address) const {
   std::uint32_t offset = address - kIoBase;
   std::uint16_t lo = io_[offset];
   std::uint16_t hi = io_[offset + 1];
-  return static_cast<std::uint16_t>(lo | (hi << 8));
+  std::uint16_t value = static_cast<std::uint16_t>(lo | (hi << 8));
+  if (address == kRegIe || address == kIfAddr) {
+    return static_cast<std::uint16_t>(value & kIrqWritableMask);
+  }
+  if (address == kRegIme) {
+    return static_cast<std::uint16_t>(value & 0x0001u);
+  }
+  return value;
 }
 
 void GbaBus::write_io16_raw(std::uint32_t address, std::uint16_t value) {
   if (address < kIoBase || address + 1 >= kIoBase + kIoSize) {
     return;
+  }
+  if (address == kRegIe || address == kIfAddr) {
+    value = static_cast<std::uint16_t>(value & kIrqWritableMask);
+  } else if (address == kRegIme) {
+    value = static_cast<std::uint16_t>(value & 0x0001u);
   }
   std::uint32_t offset = address - kIoBase;
   io_[offset] = static_cast<std::uint8_t>(value & 0xFF);
@@ -1093,6 +1380,7 @@ void GbaBus::write_io16_raw(std::uint32_t address, std::uint16_t value) {
 }
 
 void GbaBus::set_if_bits(std::uint16_t mask) {
+  mask = static_cast<std::uint16_t>(mask & kIrqWritableMask);
   std::uint16_t cur = read_io16(kIfAddr);
   std::uint16_t next = static_cast<std::uint16_t>(cur | mask);
   write_io16_raw(kIfAddr, next);
@@ -1257,6 +1545,14 @@ bool GbaBus::deserialize(const std::vector<std::uint8_t>& data,
   eeprom_cmd_bits_.clear();
   eeprom_read_bits_.clear();
   eeprom_read_index_ = 0;
+  mgba_debug_io_.assign(kMgbaDebugSize, 0);
+  mgba_debug_enabled_ = false;
+  mgba_debug_output_.clear();
+  timing_active_ = false;
+  pending_timing_cycles_ = 0;
+  fetch_stream_active_ = false;
+  fetch_expected_addr_ = 0;
+  prefetch_halfwords_ = 0;
 
   if (save_type_ == SaveType::Eeprom512B || save_type_ == SaveType::Eeprom8K) {
     if (save_data_.size() == 512u) {

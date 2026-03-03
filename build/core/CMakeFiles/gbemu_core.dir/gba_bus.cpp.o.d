@@ -137,8 +137,9 @@ core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: \
  /usr/include/c++/15/bits/ranges_algo.h \
  /usr/include/c++/15/bits/ranges_algobase.h \
  /usr/include/c++/15/pstl/glue_algorithm_defs.h \
- /usr/include/c++/15/pstl/execution_defs.h /usr/include/c++/15/iomanip \
- /usr/include/c++/15/bits/ios_base.h /usr/include/c++/15/ext/atomicity.h \
+ /usr/include/c++/15/pstl/execution_defs.h /usr/include/c++/15/array \
+ /usr/include/c++/15/iomanip /usr/include/c++/15/bits/ios_base.h \
+ /usr/include/c++/15/ext/atomicity.h \
  /usr/include/x86_64-linux-gnu/c++/15/bits/gthr.h \
  /usr/include/x86_64-linux-gnu/c++/15/bits/gthr-default.h \
  /usr/include/pthread.h /usr/include/sched.h \

@@ -18,6 +18,7 @@ void Ppu::set_system(System system) {
   line_ = 0;
   mode_ = 0;
   coincidence_ = false;
+  stat_irq_line_ = false;
 }
 
 System Ppu::system() const {
@@ -131,6 +132,7 @@ void Ppu::step(int cycles, Mmu* mmu) {
     std::uint8_t stat = mmu->read_u8(0xFF41);
     stat = static_cast<std::uint8_t>((stat & 0xF8) | 0x00);
     mmu->set_stat(stat);
+    stat_irq_line_ = false;
     return;
   }
 
@@ -164,26 +166,13 @@ void Ppu::step(int cycles, Mmu* mmu) {
   }
 
   std::uint8_t stat = mmu->read_u8(0xFF41);
-  if (new_mode != mode_) {
-    if (new_mode == 0) {
-      mmu->on_hblank();
-    }
-    if (new_mode == 0 && (stat & 0x08)) {
-      mmu->request_interrupt(1);
-    } else if (new_mode == 1 && (stat & 0x10)) {
-      mmu->request_interrupt(1);
-    } else if (new_mode == 2 && (stat & 0x20)) {
-      mmu->request_interrupt(1);
-    }
+  if (new_mode != mode_ && new_mode == 0) {
+    mmu->on_hblank();
   }
   mode_ = new_mode;
 
   std::uint8_t lyc = mmu->read_u8(0xFF45);
-  bool now_coincident = (static_cast<std::uint8_t>(line_) == lyc);
-  if (now_coincident && !coincidence_ && (stat & 0x40)) {
-    mmu->request_interrupt(1);
-  }
-  coincidence_ = now_coincident;
+  coincidence_ = (static_cast<std::uint8_t>(line_) == lyc);
 
   stat = static_cast<std::uint8_t>((stat & 0xF8) | (mode_ & 0x03));
   if (coincidence_) {
@@ -191,6 +180,25 @@ void Ppu::step(int cycles, Mmu* mmu) {
   } else {
     stat = static_cast<std::uint8_t>(stat & ~0x04);
   }
+
+  // LCD STAT interrupt is edge-triggered from the combined STAT source line.
+  bool stat_irq_line = false;
+  if ((mode_ == 0) && (stat & 0x08)) {
+    stat_irq_line = true;
+  }
+  if ((mode_ == 1) && (stat & 0x10)) {
+    stat_irq_line = true;
+  }
+  if ((mode_ == 2) && (stat & 0x20)) {
+    stat_irq_line = true;
+  }
+  if (coincidence_ && (stat & 0x40)) {
+    stat_irq_line = true;
+  }
+  if (stat_irq_line && !stat_irq_line_) {
+    mmu->request_interrupt(1);
+  }
+  stat_irq_line_ = stat_irq_line;
 
   mmu->set_stat(stat);
   mmu->set_ly(static_cast<std::uint8_t>(line_));

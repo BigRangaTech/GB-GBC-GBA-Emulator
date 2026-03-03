@@ -29,6 +29,8 @@ class GbaBus {
   std::uint8_t read8(std::uint32_t address) const;
   std::uint16_t read16(std::uint32_t address) const;
   std::uint32_t read32(std::uint32_t address) const;
+  std::uint16_t fetch16(std::uint32_t address);
+  std::uint32_t fetch32(std::uint32_t address);
   std::uint8_t read_palette8_fast(std::uint32_t address) const;
   std::uint16_t read_palette16_fast(std::uint32_t address) const;
   std::uint8_t read_vram8_fast(std::uint32_t address) const;
@@ -51,6 +53,7 @@ class GbaBus {
   void set_last_pc(std::uint32_t pc);
   bool take_postflg_write(std::uint32_t* pc, std::uint8_t* value);
   bool take_halt_request(bool* stop);
+  std::string take_debug_output();
   bool patch_rom16(std::uint32_t address, std::uint16_t value);
   bool patch_rom32(std::uint32_t address, std::uint32_t value);
   void serialize(std::vector<std::uint8_t>* out) const;
@@ -60,6 +63,8 @@ class GbaBus {
   std::vector<std::uint8_t> save_data() const { return save_data_; }
   void load_save_data(const std::vector<std::uint8_t>& data);
   SaveType save_type() const { return save_type_; }
+  void begin_cpu_step();
+  int finish_cpu_step(int base_cycles);
 
   const std::vector<std::uint8_t>& rom() const { return rom_; }
   const std::vector<std::uint8_t>& bios() const { return bios_; }
@@ -87,8 +92,21 @@ class GbaBus {
                       int bits,
                       bool write) const;
   bool rom_offset_for(std::uint32_t address, std::uint32_t* offset) const;
+  bool is_gamepak_address(std::uint32_t address) const;
+  int gamepak_wait_cycles_halfword(std::uint32_t address, bool sequential) const;
+  int gamepak_wait_cycles(std::uint32_t address, int bytes, bool sequential_first) const;
+  int sram_wait_cycles() const;
+  bool prefetch_enabled() const;
+  void refill_prefetch(int cycles) const;
+  void account_data_access_timing(std::uint32_t address, int bytes) const;
+  void account_fetch_timing(std::uint32_t address, int bytes) const;
+  std::uint16_t read16_no_timing(std::uint32_t address) const;
+  std::uint32_t read32_no_timing(std::uint32_t address) const;
   bool is_eeprom_address(std::uint32_t address) const;
   bool is_flash_address(std::uint32_t address) const;
+  bool is_mgba_debug_address(std::uint32_t address) const;
+  void handle_mgba_debug_write(std::uint32_t address, std::uint8_t value);
+  void flush_mgba_debug_string();
   std::uint8_t read_save8(std::uint32_t address) const;
   void write_save8(std::uint32_t address, std::uint8_t value);
   std::uint8_t read_flash8(std::uint32_t address) const;
@@ -150,6 +168,14 @@ class GbaBus {
   std::uint8_t postflg_value_ = 0;
   bool halt_requested_ = false;
   bool stop_requested_ = false;
+  std::vector<std::uint8_t> mgba_debug_io_;
+  bool mgba_debug_enabled_ = false;
+  std::string mgba_debug_output_;
+  bool timing_active_ = false;
+  mutable int pending_timing_cycles_ = 0;
+  mutable bool fetch_stream_active_ = false;
+  mutable std::uint32_t fetch_expected_addr_ = 0;
+  mutable int prefetch_halfwords_ = 0;
 };
 
 } // namespace gbemu::core

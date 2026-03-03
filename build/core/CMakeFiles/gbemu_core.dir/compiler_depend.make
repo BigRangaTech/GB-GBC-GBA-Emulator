@@ -665,6 +665,7 @@ core/CMakeFiles/gbemu_core.dir/gba_bus.cpp.o: /home/jessie/Documents/GB-GBC-GBA-
   /usr/include/asm-generic/posix_types.h \
   /usr/include/asm-generic/types.h \
   /usr/include/c++/15/algorithm \
+  /usr/include/c++/15/array \
   /usr/include/c++/15/backward/binders.h \
   /usr/include/c++/15/bit \
   /usr/include/c++/15/bits/algorithmfwd.h \

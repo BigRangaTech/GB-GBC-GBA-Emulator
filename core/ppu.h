@@ -21,9 +21,9 @@ class Ppu {
 
   int width() const;
   int height() const;
- int stride_bytes() const;
- const std::uint32_t* framebuffer() const;
- std::uint32_t* framebuffer_mut();
+  int stride_bytes() const;
+  const std::uint32_t* framebuffer() const;
+  std::uint32_t* framebuffer_mut();
 
   void step(int cycles, Mmu* mmu);
   void set_debug_window_overlay(bool enabled);
@@ -45,6 +45,7 @@ class Ppu {
   int line_ = 0;
   int mode_ = 0;
   bool coincidence_ = false;
+  bool stat_irq_line_ = false;
   bool debug_window_overlay_ = false;
   bool cgb_color_correction_ = false;
 };

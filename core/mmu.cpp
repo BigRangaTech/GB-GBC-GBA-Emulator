@@ -208,8 +208,9 @@ bool Mmu::load(System system,
   }
   oam_.assign(0xA0, 0);
   io_.assign(0x80, 0);
+  io_[0x0F] = 0xE1;
   hram_.assign(0x7F, 0);
-  interrupt_enable_ = 0;
+  interrupt_enable_ = 0xE0;
   div_ = 0;
   tima_ = 0;
   tma_ = 0;
@@ -381,14 +382,14 @@ std::uint8_t Mmu::read_u8(std::uint16_t address) const {
         return static_cast<std::uint8_t>((obpi_ & 0x3F) | (obpi_inc_ ? 0x80 : 0x00));
       case 0xFF6B:
         return obj_palette_[obpi_ & 0x3F];
-      case 0xFF0F: return io_[0x0F];
+      case 0xFF0F: return static_cast<std::uint8_t>(0xE0u | (io_[0x0F] & 0x1Fu));
       default: return io_[address - 0xFF00];
     }
   }
   if (address < 0xFFFF) {
     return hram_[address - 0xFF80];
   }
-  return interrupt_enable_;
+  return static_cast<std::uint8_t>(0xE0u | (interrupt_enable_ & 0x1Fu));
 }
 
 void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
@@ -695,7 +696,7 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
         }
         break;
       case 0xFF0F:
-        io_[0x0F] = value;
+        io_[0x0F] = static_cast<std::uint8_t>(0xE0u | (value & 0x1Fu));
         break;
       default:
         io_[index] = value;
@@ -710,7 +711,7 @@ void Mmu::write_u8(std::uint16_t address, std::uint8_t value) {
     hram_[address - 0xFF80] = value;
     return;
   }
-  interrupt_enable_ = value;
+  interrupt_enable_ = static_cast<std::uint8_t>(0xE0u | (value & 0x1Fu));
 }
 
 bool Mmu::boot_rom_enabled() const {
@@ -718,19 +719,21 @@ bool Mmu::boot_rom_enabled() const {
 }
 
 std::uint8_t Mmu::interrupt_enable() const {
-  return interrupt_enable_;
+  return static_cast<std::uint8_t>(0xE0u | (interrupt_enable_ & 0x1Fu));
 }
 
 std::uint8_t Mmu::interrupt_flags() const {
-  return io_[0x0F];
+  return static_cast<std::uint8_t>(0xE0u | (io_[0x0F] & 0x1Fu));
 }
 
 void Mmu::set_interrupt_flags(std::uint8_t value) {
-  io_[0x0F] = value;
+  io_[0x0F] = static_cast<std::uint8_t>(0xE0u | (value & 0x1Fu));
 }
 
 void Mmu::request_interrupt(std::uint8_t bit) {
-  io_[0x0F] = static_cast<std::uint8_t>(io_[0x0F] | (1u << bit));
+  if (bit < 5) {
+    io_[0x0F] = static_cast<std::uint8_t>(0xE0u | ((io_[0x0F] | (1u << bit)) & 0x1Fu));
+  }
 }
 
 void Mmu::set_ly(std::uint8_t value) {

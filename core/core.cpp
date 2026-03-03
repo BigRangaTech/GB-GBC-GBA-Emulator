@@ -137,7 +137,7 @@ bool EmulatorCore::gb_cpu_halted() const {
 
 std::string EmulatorCore::take_serial_output() {
   if (system_ == System::GBA) {
-    return "";
+    return gba_.take_debug_output();
   }
   return mmu_.take_serial_output();
 }

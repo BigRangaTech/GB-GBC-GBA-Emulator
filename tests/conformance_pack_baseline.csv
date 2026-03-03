@@ -1,8 +1,11 @@
 # pack,min_executed,min_pass,max_fail,max_unknown
-smoke,12,0,1,11
+smoke,6,6,0,0
+gba-smoke,2,0,0,2
 gba-cpu,2,0,0,2
 gba-dma-timer,1,0,0,1
+gba-mem-timing,1,0,0,1
 gba-ppu,1,0,0,1
-gba-swi-bios,1,0,0,1
+gba-swi-bios,2,0,0,2
+gba-swi-compat,1,0,0,1
 gbc-ppu,1,0,0,1
-gb-timer-irq,5,0,0,5
+gb-timer-irq,5,5,0,0

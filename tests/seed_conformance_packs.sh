@@ -9,8 +9,10 @@ mkdir -p \
   "${CONF_ROOT}/GBA/CPU/ARM" \
   "${CONF_ROOT}/GBA/CPU/THUMB" \
   "${CONF_ROOT}/GBA/DMA/TIMER" \
+  "${CONF_ROOT}/GBA/MEM/TIMING" \
   "${CONF_ROOT}/GBA/PPU" \
   "${CONF_ROOT}/GBA/SWI" \
+  "${CONF_ROOT}/GBA/SWI/COMPAT" \
   "${CONF_ROOT}/GBC/PPU" \
   "${CONF_ROOT}/GB/TIMER/IRQ"
 
@@ -75,8 +77,10 @@ link_first_by_path_pattern() {
 link_if_exists "${ROOT}/GBA/sips.gba" "${CONF_ROOT}/GBA/CPU/ARM/sips-gba-cpu-arm.gba"
 link_if_exists "${ROOT}/GBA/aladdin.gba" "${CONF_ROOT}/GBA/CPU/THUMB/aladdin-gba-cpu-thumb.gba"
 link_if_exists "${ROOT}/GBA/sips.gba" "${CONF_ROOT}/GBA/DMA/TIMER/sips-gba-dma-timer.gba"
+link_if_exists "${ROOT}/GBA/sips.gba" "${CONF_ROOT}/GBA/MEM/TIMING/sips-gba-mem-timing.gba"
 link_if_exists "${ROOT}/GBA/aladdin.gba" "${CONF_ROOT}/GBA/PPU/aladdin-gba-ppu.gba"
 link_if_exists "${ROOT}/GBA/sips.gba" "${CONF_ROOT}/GBA/SWI/sips-gba-swi.gba"
+link_if_exists "${ROOT}/GBA/sips.gba" "${CONF_ROOT}/GBA/SWI/COMPAT/sips-gba-swi-compat.gba"
 link_if_exists "${ROOT}/GBC/PAC-MAN (PD) [C].GBC" "${CONF_ROOT}/GBC/PPU/pacman-gbc-ppu.gbc"
 rm -f "${CONF_ROOT}/GB/TIMER/IRQ"/*
 link_first_by_path_pattern "${ROOT}" "*mooneye*/acceptance/intr_timing.gb" \
@@ -94,9 +98,9 @@ link_first_by_path_pattern "${ROOT}" "*blargg*/interrupt_time/interrupt_time.gb"
 link_first_by_path_pattern "${ROOT}" "*blargg*/halt_bug.gb" \
   "${CONF_ROOT}/GB/TIMER/IRQ/blargg-halt-bug-gb-timer-irq.gb"
 
-# Smoke pack: auto-link all local blargg/mooneye ROMs, plus local GBA ROMs.
+# Smoke path staging: verdict-focused GB smoke links + quick GBA smoke links.
 rm -f "${CONF_ROOT}/SMOKE"/*
-# Blargg curated smoke subset.
+# Blargg curated smoke subset (smoke pack consumes instr_timing verdict path).
 link_first_by_path_pattern "${ROOT}" "*blargg*/cpu_instrs/cpu_instrs.gb" \
   "${CONF_ROOT}/SMOKE/blargg-cpu-instrs-smoke.gb"
 link_first_by_path_pattern "${ROOT}" "*blargg*/instr_timing/instr_timing.gb" \
@@ -120,7 +124,7 @@ link_first_by_path_pattern "${ROOT}" "*mooneye*/acceptance/timer/tima_reload.gb"
 link_first_by_path_pattern "${ROOT}" "*mooneye*/acceptance/ppu/stat_irq_blocking.gb" \
   "${CONF_ROOT}/SMOKE/mooneye-ppu-stat-irq-blocking-smoke.gb"
 
-# Keep GBA smoke quick by linking only a few local GBA ROMs.
+# Keep GBA smoke quick by linking only a few local GBA ROMs (gba-smoke pack).
 link_many_from_dir "${ROOT}/GBA" "${CONF_ROOT}/SMOKE" "gba-smoke" 3
 
 echo "Conformance seed complete: ${linked} ROM link(s) refreshed under ${CONF_ROOT}"

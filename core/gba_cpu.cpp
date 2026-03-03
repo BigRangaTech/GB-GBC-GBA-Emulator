@@ -642,7 +642,7 @@ int GbaCpu::step(GbaBus* bus) {
 
   std::uint32_t pc = regs_.r[15];
   if (thumb_) {
-    std::uint16_t op = bus->read16(pc);
+    std::uint16_t op = bus->fetch16(pc);
     regs_.r[15] = pc + 2;
     std::uint16_t op_high = op & 0xF800;
     if ((op & 0xF800) == 0x0000 ||
@@ -1107,7 +1107,7 @@ int GbaCpu::step(GbaBus* bus) {
     return 2;
   }
 
-  std::uint32_t op = bus->read32(pc);
+  std::uint32_t op = bus->fetch32(pc);
   regs_.r[15] = pc + 4;
 
   std::uint8_t cond = static_cast<std::uint8_t>(op >> 28);

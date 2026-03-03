@@ -10,14 +10,21 @@ The conformance harness (`tests/tests.cpp`) supports targeted pack selection via
 - `GBEMU_CONFORMANCE_BASELINE_FILE=<path>` (default: `tests/conformance_pack_baseline.csv`)
 - `GBEMU_CONFORMANCE_ENFORCE_BASELINE=1|0` (default: `1`)
 - `GBEMU_CONFORMANCE_REPORT_PATH=<path>` (optional CSV output)
+- `GBEMU_CONFORMANCE_MOONEYE_REAL_BOOT=1|0` (default: `1`, prefer real boot ROM for mooneye)
+- `GBEMU_CONFORMANCE_REAL_BOOT_MIN_FRAMES=<n>` (default: `1200`, minimum budget when real boot is used)
+- `GBEMU_CONFORMANCE_FORCE_SYNTH_BOOT=1|0` (default: `0`, disable real boot usage)
+- `GBEMU_CONFORMANCE_DEBUG_TRACE=1|0` (default: `0`, include GB trace tails on verdict debug lines)
 
 ## Available Packs
 
-- `smoke`: broad quick pass (`blargg`, `mooneye`, generic `gba` smoke)
+- `smoke`: verdict-focused quick pass (`blargg` instr-timing + curated `mooneye`)
+- `gba-smoke`: quick GBA boot/runtime smoke ROMs (typically non-verdict)
 - `gba-cpu`: GBA ARM/THUMB instruction-focused ROMs
 - `gba-dma-timer`: GBA DMA/timer behavior ROMs
+- `gba-mem-timing`: GBA Game Pak memory waitstate/prefetch timing ROMs
 - `gba-ppu`: GBA PPU/video mode/window/blending ROMs
 - `gba-swi-bios`: GBA SWI/BIOS behavior ROMs
+- `gba-swi-compat`: GBA SWI compatibility-focused ROMs
 - `gbc-ppu`: GBC video/PPU behavior ROMs
 - `gb-timer-irq`: GB timer/interrupt behavior ROMs
 - `all`: shorthand to run all packs
@@ -29,16 +36,25 @@ Examples:
 
 - `gba-cpu`: path should include `gba`, `cpu`, and (`arm` or `thumb` depending on case)
 - `gba-dma-timer`: path should include `gba`, `dma`, `timer`
+- `gba-mem-timing`: path should include `gba`, `mem`, `timing`
 - `gba-ppu`: path should include `gba`, `ppu`
 - `gba-swi-bios`: path should include `gba`, `swi`
+- `gba-swi-compat`: path should include `gba`, `swi`, `compat`
+
+Verdict parsing is path-aware:
+
+- GB `blargg`/`mooneye` suites use serial-pattern verdict detection.
+- GBA text verdict detection is enabled for `.gba` paths containing `mgba`, `gba-tests`, or `testsuite`; explicit pass/fail tokens are required to avoid `unknown`.
 
 Recommended layout under `Test-Games/Conformance/`:
 
 - `Test-Games/Conformance/GBA/CPU/ARM/*.gba`
 - `Test-Games/Conformance/GBA/CPU/THUMB/*.gba`
 - `Test-Games/Conformance/GBA/DMA/TIMER/*.gba`
+- `Test-Games/Conformance/GBA/MEM/TIMING/*.gba`
 - `Test-Games/Conformance/GBA/PPU/*.gba`
 - `Test-Games/Conformance/GBA/SWI/*.gba`
+- `Test-Games/Conformance/GBA/SWI/COMPAT/*.gba`
 - `Test-Games/Conformance/GBC/PPU/*.gbc`
 - `Test-Games/Conformance/GB/TIMER/IRQ/*.gb`
 
@@ -71,9 +87,9 @@ known local GBA/GBC examples into their matching feature packs.
 
 For `smoke`, it links a curated fast subset:
 
-- Blargg: `cpu_instrs`, `instr_timing`, `interrupt_time`, `mem_timing-2`, `halt_bug`
+- Blargg: `instr_timing`
 - Mooneye: `div_timing`, `intr_timing`, `timer/div_write`, `timer/tima_reload`, `ppu/stat_irq_blocking`
-- Up to 3 local GBA ROMs from `<root>/GBA/`
+- For `gba-smoke`: up to 3 local GBA ROMs from `<root>/GBA/`
 
 ## Baseline Gating
 
