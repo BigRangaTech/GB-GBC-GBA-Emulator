@@ -1,4 +1,4 @@
-.PHONY: build test conformance-smoke conformance-gba conformance-gba-tighten conformance-gba-swi-ab conformance-all
+.PHONY: build test ui-smoke conformance-smoke conformance-gba conformance-gba-tighten conformance-gba-swi-ab conformance-all
 
 BUILD_DIR ?= build
 ROM_ROOT ?= Test-Games
@@ -11,6 +11,9 @@ build:
 
 test:
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
+
+ui-smoke:
+	./tests/ui_smoke.sh "$(ROM_ROOT)"
 
 conformance-smoke:
 	GBEMU_CONFORMANCE_PACKS="$(PACKS)" \

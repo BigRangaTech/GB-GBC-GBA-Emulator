@@ -2,32 +2,10 @@
 
 C++20 emulator targeting Nintendo Game Boy (DMG), Game Boy Color (CGB), and Game Boy Advance (GBA), with a shared core and SDL2 frontends.
 
-## Current Status (Updated March 3, 2026)
+## Current Status
 
-- GB/GBC core: CPU, MMU, PPU, APU, input, SRAM/RTC handling.
-- GBA core: ARM/THUMB CPU, memory bus, timers, DMA, IRQs, and mode 0/1/2/3/4/5 video paths (with mixed maturity).
-- GBA compatibility: ARM `SWP/SWPB` instruction support added.
-- GB compatibility: LCD STAT IRQ edge/blocking behavior and CB-prefixed `BIT n,(HL)` timing were corrected.
-- GBA compatibility: ARM long multiply family (`UMULL/UMLAL/SMULL/SMLAL`) and register-offset `RRX` edge behavior for LDR/STR are now handled.
-- GBA compatibility: timer reload/cascade behavior and DMA start/repeat/IRQ handling tightened for better boot/runtime stability.
-- GBA compatibility: IE/IF/IME interrupt register masking now matches writable hardware bits, preventing invalid-bit IRQ side effects.
-- GBA compatibility: Game Pak timing now applies `WAITCNT` non-sequential/sequential waits, with basic prefetch-queue modeling and branch/interworking refill penalties.
-- GBA compatibility: writes to `WAITCNT` now flush fetch-stream/prefetch state so the next Game Pak fetch pays updated wait costs.
-- GBA compatibility: Game Pak data accesses now invalidate fetch-stream/prefetch state so post-load instruction timing pays proper refill penalties.
-- GBA compatibility: IRQ service and DMA bus-master activity now invalidate CPU fetch-stream/prefetch state to better model post-event refill behavior.
-- GBA compatibility: Game Pak data-burst timing now carries non-sequential to sequential wait progression within a CPU step and resets that stream on invalidation events.
-- GBA compatibility: PPU mode coverage includes Mode 5 bitmap rendering/page select, with improved window/effect-mask and alpha-blend clamping behavior.
-- GBA compatibility: cartridge save protocol handling expanded for Flash (ID/program/erase/bank commands) and EEPROM serial read/write command flows.
-- GBA compatibility: HLE SWI coverage expanded with `Div`, `DivArm`, `Sqrt`, `ArcTan`, `ArcTan2`, `CpuSet`, `CpuFastSet`, `LZ77UnCompWram/Vram`, `RLUnCompWram/Vram`, `BgAffineSet`, `ObjAffineSet`, `Halt`, and `Stop`; risky paths can now fall back to real BIOS execution.
-- GBA compatibility: mGBA debug output channel (`0x04FFF600` region) is now captured for text verdict-driven conformance runs.
-- Frontend: SDL2 launcher and runtime options for Linux.
-- Save states:
-  - GB/GBC save/load supported.
-  - GBA save/load supported (state file format version 5).
-- Cartridge save persistence:
-  - GB/GBC battery saves: supported.
-  - GBA cartridge save backing store: auto-detected from ROM tags (`SRAM_V`, `FLASH*_V`, `EEPROM_V`) and persisted via `.sav`.
-- Tests: local CTest target with ROM/config/core sanity checks, GBA state roundtrip, opcode coverage (`SWP/SWPB`, long multiply, `RRX` offset behavior), GBA memory-timing regressions (`WAITCNT` nseq/seq fetch costs, prefetch benefit, branch/interworking refill penalties, fetch-stream break on Game Pak data access, `WAITCNT`-write stream flush behavior, DMA/IRQ-event stream invalidation, WS0/WS1/WS2 waitstate scaling, SRAM + access-width timing scaling, Game Pak data-burst sequential timing, and event-driven data-stream invalidation), HLE SWI coverage (`Div`, `DivArm`, `Sqrt`, `ArcTan`, `ArcTan2`, `CpuSet`, `CpuFastSet`, `LZ77UnCompWram/Vram`, `RLUnCompWram/Vram`, `BgAffineSet`, `ObjAffineSet`, `Halt`, `Stop`, plus BIOS fallback behavior), timer/DMA edge-case coverage (cascade/repeat/IRQ/start-mode behavior), GBA IRQ entry regression coverage (IF acknowledge/priority/LR capture, THUMB-origin IRQ LR/pipeline behavior, IE/IF/IME register masking, and IME gating of pending service), PPU coverage (Mode 5/page select + window/effect-mask corner behavior), Flash/EEPROM save-protocol coverage, save persistence API checks, save-state version compatibility checks, GB serial/verdict plumbing, GBA mGBA debug-output capture, EI interrupt-delay regression coverage, GB STAT IRQ blocking and CB `BIT n,(HL)` timing regressions, and conformance pack selection/verdict/baseline regression checks.
+- Detailed implementation status is maintained in `currentstatus.md`.
+- Chronological change/test history is maintained in `CHANGELOG.md`.
 
 ## Build
 
@@ -42,11 +20,16 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+## Changelog
+
+- See `CHANGELOG.md` for chronological updates with timestamp and validation results.
+
 Optional top-level shortcuts:
 
 ```bash
 make build
 make test
+make ui-smoke
 make conformance-smoke
 make conformance-gba
 make conformance-all
@@ -60,6 +43,15 @@ GBEMU_CONFORMANCE_PACKS=smoke \
 GBEMU_CONFORMANCE_MAX_PER_CASE=3 \
 ./build/tests/gbemu_tests
 ```
+
+UI launcher/render smoke check:
+
+```bash
+./tests/ui_smoke.sh Test-Games
+```
+
+- Equivalent make target: `make ui-smoke`.
+- UI smoke also exercises Vulkan runtime overlays/controller menu navigation via scripted input (`GBEMU_VK_UI_AUTOTEST=menu-hud` and `GBEMU_VK_UI_AUTOTEST=controller-menu`).
 
 - `GBEMU_CONFORMANCE_PACKS` supports targeted groups (default: `smoke`): `smoke`, `gba-smoke`, `gba-cpu`, `gba-dma-timer`, `gba-mem-timing`, `gba-ppu`, `gba-swi-bios`, `gba-swi-compat`, `gba-swi-realbios`, `gbc-ppu`, `gb-timer-irq`, or `all`.
 - `GBEMU_CONFORMANCE_ROOT` overrides the scan root (default: `Test-Games`).
@@ -123,8 +115,24 @@ Recommended filename examples (drop anywhere under `Test-Games/`):
 ```bash
 ./build/frontend/gbemu --help
 ./build/frontend/gbemu --launcher
+./build/frontend/gbemu --renderer vulkan --launcher --rom-dir Test-Games
 ./build/frontend/gbemu --system gba --boot-rom-gba firmware/GBA/Game-Boy-Advance-Boot-ROM.bin <path-to-rom.gba>
 ```
+
+- Default render backend is Vulkan for ROM runtime and launcher UI.
+- If Vulkan is unavailable, or SDL-only options are requested (`--headless`, `--gba-test`, boot ROM override flags, `--boot-trace`, `--cgb-color-correct`), the app automatically falls back to SDL software rendering.
+- `--renderer sdl` forces SDL software rendering.
+
+Launcher controls (`--launcher`):
+
+- Keyboard: arrow keys navigate focus/shelf/tabs (`Up/Down` move between top controls, tab row, shelf, and action buttons; `Left/Right` moves inside focused row), `Enter`/`Space` activates focused item, `/` (or `Ctrl+F`) focuses search, `Backspace` edits search, `Tab` cycles library tabs, `Shift+Tab` cycles tabs backward, `[`/`]` changes theme, `S` opens settings, `F` toggles favorite, `O` toggles per-ROM override, `R` rescans ROMs, `Esc` backs out.
+- Controller: D-pad navigates focus/shelf/tabs, `A`/`Start` activates focused item, `B` backs out, `X` cycles library tabs forward, `Y` toggles favorite, `LB`/`RB` cycle tabs backward/forward, `L3`/`R3` change theme, `Back` opens settings.
+- Launcher density mode is configurable in Settings (`LAUNCHER DENSITY: AUTO / TV COMPACT / TV LARGE`).
+
+Vulkan runtime controls:
+
+- Keyboard: `F10` pause menu, `F3` help overlay toggle, `F4` HUD toggle, `F5` save state, `F9` load state, `Esc` quit.
+- Controller: `Guide` toggles pause menu, D-pad navigates menu, `A`/`Start` applies menu action, `B`/`Back` closes menu.
 
 ## Firmware
 
@@ -147,6 +155,8 @@ You can override with CLI options (`--boot-rom`, `--boot-rom-gb`, `--boot-rom-gb
 When behavior, CLI options, or state format changes, update at least:
 
 - `README.md`
+- `CHANGELOG.md` (include date/time and test results)
+- `currentstatus.md` (refresh capability snapshot/priorities when status shifts)
 - `agent.md`
 - tests that cover the changed behavior
 

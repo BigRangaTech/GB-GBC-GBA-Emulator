@@ -181,6 +181,52 @@ struct VulkanRenderer::Impl {
   std::vector<VkFramebuffer> framebuffers;
   std::atomic_bool framebuffer_resized{false};
 
+  struct PresentRegion {
+    VkViewport viewport{};
+    VkRect2D scissor{};
+  };
+
+  PresentRegion compute_present_region() const {
+    PresentRegion region{};
+    const int src_w = std::max(1, frame_width);
+    const int src_h = std::max(1, frame_height);
+    const int dst_w = std::max(1, static_cast<int>(swap_extent.width));
+    const int dst_h = std::max(1, static_cast<int>(swap_extent.height));
+
+    float scale_x = static_cast<float>(dst_w) / static_cast<float>(src_w);
+    float scale_y = static_cast<float>(dst_h) / static_cast<float>(src_h);
+    float fit_scale = std::min(scale_x, scale_y);
+    if (fit_scale <= 0.0f) {
+      fit_scale = 1.0f;
+    }
+
+    int draw_w = dst_w;
+    int draw_h = dst_h;
+    if (fit_scale >= 1.0f) {
+      int integer_scale = std::max(1, static_cast<int>(fit_scale));
+      draw_w = std::min(dst_w, src_w * integer_scale);
+      draw_h = std::min(dst_h, src_h * integer_scale);
+    } else {
+      draw_w = std::max(1, static_cast<int>(static_cast<float>(src_w) * fit_scale + 0.5f));
+      draw_h = std::max(1, static_cast<int>(static_cast<float>(src_h) * fit_scale + 0.5f));
+    }
+    draw_w = std::max(1, std::min(draw_w, dst_w));
+    draw_h = std::max(1, std::min(draw_h, dst_h));
+
+    int offset_x = (dst_w - draw_w) / 2;
+    int offset_y = (dst_h - draw_h) / 2;
+
+    region.viewport.x = static_cast<float>(offset_x);
+    region.viewport.y = static_cast<float>(offset_y);
+    region.viewport.width = static_cast<float>(draw_w);
+    region.viewport.height = static_cast<float>(draw_h);
+    region.viewport.minDepth = 0.0f;
+    region.viewport.maxDepth = 1.0f;
+    region.scissor.offset = {offset_x, offset_y};
+    region.scissor.extent = {static_cast<std::uint32_t>(draw_w), static_cast<std::uint32_t>(draw_h)};
+    return region;
+  }
+
   std::uint32_t find_memory_type(std::uint32_t filter, VkMemoryPropertyFlags props,
                                  std::string* error) {
     VkPhysicalDeviceMemoryProperties mem_props{};
@@ -524,24 +570,18 @@ struct VulkanRenderer::Impl {
         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(swap_extent.width);
-    viewport.height = static_cast<float>(swap_extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = swap_extent;
-
     VkPipelineViewportStateCreateInfo viewport_state{
         VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
     viewport_state.viewportCount = 1;
-    viewport_state.pViewports = &viewport;
+    viewport_state.pViewports = nullptr;
     viewport_state.scissorCount = 1;
-    viewport_state.pScissors = &scissor;
+    viewport_state.pScissors = nullptr;
+
+    VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic_state{
+        VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic_state.dynamicStateCount = 2;
+    dynamic_state.pDynamicStates = dynamic_states;
 
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     raster.polygonMode = VK_POLYGON_MODE_FILL;
@@ -570,6 +610,7 @@ struct VulkanRenderer::Impl {
     pipeline_info.pRasterizationState = &raster;
     pipeline_info.pMultisampleState = &msaa;
     pipeline_info.pColorBlendState = &blend;
+    pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = pipeline_layout;
     pipeline_info.renderPass = render_pass;
     pipeline_info.subpass = 0;
@@ -955,20 +996,20 @@ struct VulkanRenderer::Impl {
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                          &to_transfer);
 
-    VkBufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {static_cast<std::uint32_t>(frame_width),
-                          static_cast<std::uint32_t>(frame_height), 1};
+    VkBufferImageCopy copy_region{};
+    copy_region.bufferOffset = 0;
+    copy_region.bufferRowLength = 0;
+    copy_region.bufferImageHeight = 0;
+    copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy_region.imageSubresource.mipLevel = 0;
+    copy_region.imageSubresource.baseArrayLayer = 0;
+    copy_region.imageSubresource.layerCount = 1;
+    copy_region.imageOffset = {0, 0, 0};
+    copy_region.imageExtent = {static_cast<std::uint32_t>(frame_width),
+                               static_cast<std::uint32_t>(frame_height), 1};
 
     vkCmdCopyBufferToImage(cmd, staging_buffer, frame_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                           &region);
+                           &copy_region);
 
     VkImageMemoryBarrier to_shader{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     to_shader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -997,6 +1038,9 @@ struct VulkanRenderer::Impl {
 
     vkCmdBeginRenderPass(cmd, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    PresentRegion region = compute_present_region();
+    vkCmdSetViewport(cmd, 0, 1, &region.viewport);
+    vkCmdSetScissor(cmd, 0, 1, &region.scissor);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
                             &descriptor_set, 0, nullptr);
     vkCmdDraw(cmd, 3, 1, 0, 0);

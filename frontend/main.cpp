@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_vulkan.h>
 #ifdef GBEMU_HAS_SDL_IMAGE
 #include <SDL2/SDL_image.h>
 #endif
@@ -189,18 +190,37 @@ struct UiThemeDef {
 };
 
 struct LauncherLayout {
-  SDL_Rect header{};
+  SDL_Rect top_bar{};
   SDL_Rect search_box{};
+  SDL_Rect filter_button{};
   SDL_Rect settings_button{};
-  SDL_Rect filter_hit{};
-  SDL_Rect list_panel{};
-  SDL_Rect detail_panel{};
-  SDL_Rect override_button{};
+  SDL_Rect tabs_panel{};
+  std::array<SDL_Rect, 6> tabs{};
+  SDL_Rect hero_panel{};
+  SDL_Rect hero_art{};
+  SDL_Rect hero_meta{};
+  SDL_Rect shelf_panel{};
+  SDL_Rect shelf_track{};
+  SDL_Rect action_bar{};
   SDL_Rect play_button{};
   SDL_Rect favorite_button{};
-  int card_h = 38;
+  SDL_Rect override_button{};
+  int card_w = 180;
+  int card_h = 112;
+  int card_gap = 14;
   int visible = 1;
-  int start_y = 0;
+  int start_x = 0;
+};
+
+enum class LauncherFocus {
+  Search,
+  Filter,
+  Settings,
+  Tabs,
+  Shelf,
+  Play,
+  Favorite,
+  Override,
 };
 
 const UiThemeDef& theme_def(UiTheme theme) {
@@ -301,6 +321,19 @@ enum class LauncherFilter {
   All,
   Favorites,
   Recents,
+};
+
+enum class LauncherDensity {
+  Auto,
+  TvCompact,
+  TvLarge,
+};
+
+enum class LauncherSystemFilter {
+  All,
+  GB,
+  GBC,
+  GBA,
 };
 
 enum class VideoFilter {
@@ -405,28 +438,86 @@ HudCorner next_hud_corner(HudCorner corner, int direction) {
   return HudCorner::TopLeft;
 }
 
-std::string launcher_filter_name(LauncherFilter filter) {
-  switch (filter) {
-    case LauncherFilter::Favorites: return "favorites";
-    case LauncherFilter::Recents: return "recents";
-    case LauncherFilter::All:
+constexpr int kLauncherLibraryTabCount = 6;
+
+const char* launcher_library_tab_name(int tab_index) {
+  switch (tab_index) {
+    case 1: return "RECENTS";
+    case 2: return "FAVORITES";
+    case 3: return "GB";
+    case 4: return "GBC";
+    case 5: return "GBA";
+    case 0:
     default:
-      return "all";
+      return "ALL";
   }
 }
 
-LauncherFilter next_launcher_filter(LauncherFilter filter, int direction) {
+std::string launcher_density_name(LauncherDensity density) {
+  switch (density) {
+    case LauncherDensity::TvCompact: return "tv-compact";
+    case LauncherDensity::TvLarge: return "tv-large";
+    case LauncherDensity::Auto:
+    default:
+      return "auto";
+  }
+}
+
+std::string launcher_density_label(LauncherDensity density) {
+  switch (density) {
+    case LauncherDensity::TvCompact: return "TV COMPACT";
+    case LauncherDensity::TvLarge: return "TV LARGE";
+    case LauncherDensity::Auto:
+    default:
+      return "AUTO";
+  }
+}
+
+std::optional<LauncherDensity> parse_launcher_density(std::string_view value) {
+  std::string lower = to_lower(std::string(value));
+  if (lower == "auto") {
+    return LauncherDensity::Auto;
+  }
+  if (lower == "tv-compact" || lower == "compact" || lower == "small") {
+    return LauncherDensity::TvCompact;
+  }
+  if (lower == "tv-large" || lower == "large" || lower == "big") {
+    return LauncherDensity::TvLarge;
+  }
+  return std::nullopt;
+}
+
+LauncherDensity next_launcher_density(LauncherDensity density, int direction) {
   int idx = 0;
-  switch (filter) {
-    case LauncherFilter::All: idx = 0; break;
-    case LauncherFilter::Favorites: idx = 1; break;
-    case LauncherFilter::Recents: idx = 2; break;
+  switch (density) {
+    case LauncherDensity::Auto: idx = 0; break;
+    case LauncherDensity::TvCompact: idx = 1; break;
+    case LauncherDensity::TvLarge: idx = 2; break;
     default: idx = 0; break;
   }
   idx = (idx + direction + 3) % 3;
-  if (idx == 1) return LauncherFilter::Favorites;
-  if (idx == 2) return LauncherFilter::Recents;
-  return LauncherFilter::All;
+  if (idx == 1) return LauncherDensity::TvCompact;
+  if (idx == 2) return LauncherDensity::TvLarge;
+  return LauncherDensity::Auto;
+}
+
+int launcher_library_tab_index(LauncherFilter filter, LauncherSystemFilter system_filter) {
+  if (system_filter == LauncherSystemFilter::GB) {
+    return 3;
+  }
+  if (system_filter == LauncherSystemFilter::GBC) {
+    return 4;
+  }
+  if (system_filter == LauncherSystemFilter::GBA) {
+    return 5;
+  }
+  switch (filter) {
+    case LauncherFilter::Recents: return 1;
+    case LauncherFilter::Favorites: return 2;
+    case LauncherFilter::All:
+    default:
+      return 0;
+  }
 }
 
 const Glyph& glyph_for(char c) {
@@ -810,6 +901,20 @@ bool matches_search(const RomEntry& entry, const std::string& query) {
   return false;
 }
 
+bool matches_system_filter(const RomEntry& entry, LauncherSystemFilter filter) {
+  switch (filter) {
+    case LauncherSystemFilter::GB:
+      return entry.system == gbemu::core::System::GB;
+    case LauncherSystemFilter::GBC:
+      return entry.system == gbemu::core::System::GBC;
+    case LauncherSystemFilter::GBA:
+      return entry.system == gbemu::core::System::GBA;
+    case LauncherSystemFilter::All:
+    default:
+      return true;
+  }
+}
+
 std::string system_short(gbemu::core::System system) {
   switch (system) {
     case gbemu::core::System::GBA: return "GBA";
@@ -1027,6 +1132,7 @@ void save_launcher_state(const std::string& path,
 
 struct UiState {
   std::optional<UiTheme> theme;
+  std::optional<LauncherDensity> launcher_density;
   std::optional<int> scale;
   std::optional<double> fps;
   std::optional<int> deadzone;
@@ -1072,6 +1178,8 @@ UiState load_ui_state(const std::string& path) {
     std::string value = line.substr(pos + 1);
     if (key == "ui_theme") {
       state.theme = parse_ui_theme(value);
+    } else if (key == "launcher_density") {
+      state.launcher_density = parse_launcher_density(value);
     } else if (key == "scale") {
       try {
         state.scale = std::stoi(value);
@@ -1123,6 +1231,7 @@ UiState load_ui_state(const std::string& path) {
 
 void save_ui_state(const std::string& path,
                    UiTheme theme,
+                   LauncherDensity launcher_density,
                    int scale,
                    double fps,
                    int deadzone,
@@ -1138,6 +1247,7 @@ void save_ui_state(const std::string& path,
     return;
   }
   file << "ui_theme=" << ui_theme_name(theme) << "\n";
+  file << "launcher_density=" << launcher_density_name(launcher_density) << "\n";
   file << "scale=" << scale << "\n";
   file << "fps=" << fps << "\n";
   file << "deadzone=" << deadzone << "\n";
@@ -1320,9 +1430,15 @@ bool is_auto_system_value(std::string_view value) {
   return lower.empty() || lower == "auto";
 }
 
+bool is_valid_renderer_backend(std::string_view value) {
+  std::string lower = to_lower(value);
+  return lower == "sdl" || lower == "vulkan";
+}
+
 struct Options {
   std::string rom_path;
   std::string config_path;
+  std::optional<std::string> renderer_backend;
   std::string boot_rom_path;
   std::string boot_rom_gb;
   std::string boot_rom_gbc;
@@ -1383,7 +1499,7 @@ void print_usage(const char* exe) {
   std::cout << "Usage: " << exe << " [options] <rom_file>\n";
   std::cout << "Options:\n";
   std::cout << "  --config <path>        Config file path (default: ./gbemu.conf if present)\n";
-  std::cout << "  --renderer <sdl|vulkan>  Select rendering frontend\n";
+  std::cout << "  --renderer <sdl|vulkan>  Select rendering frontend (default: vulkan)\n";
   std::cout << "  --system <gb|gbc|gba>  Override system detection\n";
   std::cout << "  --fps <value>          Override target frame rate (0 to disable pacing)\n";
   std::cout << "  --filter <none|scanlines|lcd|crt>  Video filter\n";
@@ -1455,6 +1571,15 @@ bool apply_config_file(const std::string& path, Options* options, bool required)
       options->system_override.reset();
     } else {
       std::cout << "Config warning: invalid system value '" << system_value << "'\n";
+    }
+  }
+
+  std::string renderer_value = config.get_string("renderer", "");
+  if (!renderer_value.empty()) {
+    if (is_valid_renderer_backend(renderer_value)) {
+      options->renderer_backend = to_lower(renderer_value);
+    } else {
+      std::cout << "Config warning: invalid renderer value '" << renderer_value << "'\n";
     }
   }
 
@@ -2379,6 +2504,74 @@ bool init_sdl_with_fallback(const std::optional<std::string>& driver_override) {
   return false;
 }
 
+bool request_requires_sdl_frontend(const Options& options, std::string* reason) {
+  auto set_reason = [&](const char* text) {
+    if (reason) {
+      *reason = text;
+    }
+  };
+  if (options.headless) {
+    set_reason("headless mode is SDL-only");
+    return true;
+  }
+  if (options.launcher) {
+    return false;
+  }
+  if (options.gba_test) {
+    set_reason("--gba-test is SDL-only");
+    return true;
+  }
+  if (!options.boot_rom_path.empty() || !options.boot_rom_gb.empty() ||
+      !options.boot_rom_gbc.empty() || !options.boot_rom_gba.empty()) {
+    set_reason("boot ROM override options are SDL-only");
+    return true;
+  }
+  if (options.boot_trace) {
+    set_reason("--boot-trace is SDL-only");
+    return true;
+  }
+  if (options.cgb_color_correction) {
+    set_reason("--cgb-color-correct is SDL-only");
+    return true;
+  }
+  return false;
+}
+
+bool probe_vulkan_frontend_available(const std::optional<std::string>& video_driver,
+                                     std::string* reason) {
+  if (!init_sdl_with_fallback(video_driver)) {
+    if (reason) {
+      *reason = "SDL video init failed";
+    }
+    return false;
+  }
+
+  SDL_Window* probe_window = SDL_CreateWindow("GBEmu Vulkan Probe", SDL_WINDOWPOS_UNDEFINED,
+                                              SDL_WINDOWPOS_UNDEFINED, 64, 64,
+                                              SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
+  if (!probe_window) {
+    if (reason) {
+      *reason = std::string("failed to create Vulkan probe window: ") + SDL_GetError();
+    }
+    SDL_Quit();
+    return false;
+  }
+
+  unsigned ext_count = 0;
+  if (!SDL_Vulkan_GetInstanceExtensions(probe_window, &ext_count, nullptr) || ext_count == 0) {
+    if (reason) {
+      *reason = std::string("Vulkan extensions unavailable: ") + SDL_GetError();
+    }
+    SDL_DestroyWindow(probe_window);
+    SDL_Quit();
+    return false;
+  }
+
+  SDL_DestroyWindow(probe_window);
+  SDL_Quit();
+  return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2386,7 +2579,8 @@ int main(int argc, char** argv) {
   std::cout << "GBEmu skeleton v" << core.version() << "\n";
 
   Options options;
-  std::string renderer_backend = "sdl";
+  std::string renderer_backend = "vulkan";
+  bool renderer_overridden_by_cli = false;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--help" || arg == "-h") {
@@ -2397,7 +2591,8 @@ int main(int argc, char** argv) {
         return 1;
       }
       renderer_backend = argv[++i];
-      if (renderer_backend != "sdl" && renderer_backend != "vulkan") {
+      renderer_overridden_by_cli = true;
+      if (!is_valid_renderer_backend(renderer_backend)) {
         std::cout << "Invalid renderer value: " << renderer_backend << "\n";
         return 1;
       }
@@ -2607,6 +2802,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (!renderer_overridden_by_cli && options.renderer_backend.has_value()) {
+    renderer_backend = *options.renderer_backend;
+  }
+
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--help" || arg == "-h") {
@@ -2617,7 +2816,8 @@ int main(int argc, char** argv) {
         return 1;
       }
       renderer_backend = argv[++i];
-      if (renderer_backend != "sdl" && renderer_backend != "vulkan") {
+      renderer_overridden_by_cli = true;
+      if (!is_valid_renderer_backend(renderer_backend)) {
         std::cout << "Invalid renderer value: " << renderer_backend << "\n";
         return 1;
       }
@@ -2895,8 +3095,28 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  bool force_software_renderer = false;
   if (renderer_backend == "vulkan") {
-    return gbemu::frontend::run_vulkan_frontend(argc, argv);
+    std::string sdl_reason;
+    if (request_requires_sdl_frontend(options, &sdl_reason)) {
+      std::cout << "Vulkan frontend bypassed: " << sdl_reason
+                << ". Falling back to SDL software renderer.\n";
+      renderer_backend = "sdl";
+      force_software_renderer = true;
+    } else {
+      std::string probe_reason;
+      if (probe_vulkan_frontend_available(options.video_driver, &probe_reason)) {
+        return gbemu::frontend::run_vulkan_frontend(argc, argv);
+      }
+      std::cout << "Vulkan unavailable (" << probe_reason
+                << "). Falling back to SDL software renderer.\n";
+      renderer_backend = "sdl";
+      force_software_renderer = true;
+    }
+  }
+  if (renderer_backend == "sdl") {
+    force_software_renderer = true;
+    std::cout << "Renderer backend: SDL software\n";
   }
 
   bool launcher_enabled = options.launcher;
@@ -2939,6 +3159,7 @@ int main(int argc, char** argv) {
   }
 
   UiTheme ui_theme = options.ui_theme.value_or(UiTheme::Retro);
+  LauncherDensity launcher_density = LauncherDensity::Auto;
   int theme_toast_frames = 0;
   bool show_help_pref = options.show_help_overlay;
   bool show_hud_pref = options.hud.value_or(true);
@@ -3044,6 +3265,9 @@ int main(int argc, char** argv) {
   UiState ui_state = load_ui_state(ui_state_path.string());
   if (!options.ui_theme.has_value() && ui_state.theme.has_value()) {
     ui_theme = *ui_state.theme;
+  }
+  if (ui_state.launcher_density.has_value()) {
+    launcher_density = *ui_state.launcher_density;
   }
   if (!options.scale_override.has_value() && ui_state.scale.has_value()) {
     options.scale_override = *ui_state.scale;
@@ -3546,7 +3770,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+  Uint32 renderer_flags = force_software_renderer ? SDL_RENDERER_SOFTWARE : SDL_RENDERER_ACCELERATED;
+  SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renderer_flags);
   if (!renderer) {
     std::cout << "Failed to create renderer: " << SDL_GetError() << "\n";
     SDL_DestroyWindow(window);
@@ -3845,7 +4070,10 @@ int main(int argc, char** argv) {
   int menu_index = 0;
   int settings_index = 0;
   LauncherFilter launcher_filter = LauncherFilter::All;
+  LauncherSystemFilter launcher_system_filter = LauncherSystemFilter::All;
+  int launcher_tab_index = 0;
   std::string launcher_search;
+  LauncherFocus launcher_focus = LauncherFocus::Shelf;
   bool search_focus = false;
   bool text_input_active = false;
   UiMode last_mode = ui_mode;
@@ -3864,15 +4092,21 @@ int main(int argc, char** argv) {
       gbemu::common::InputAction::Right,
   };
   int launcher_visible = 8;
+  float launcher_scroll_anim = 0.0f;
+  float launcher_index_anim = 0.0f;
   int mouse_x = 0;
   int mouse_y = 0;
 
   auto build_launcher_list = [&]() {
     launcher_list.clear();
+    auto include_entry = [&](const RomEntry& entry) {
+      return matches_search(entry, launcher_search) &&
+             matches_system_filter(entry, launcher_system_filter);
+    };
     if (launcher_filter == LauncherFilter::Recents) {
       for (const auto& path : recent_paths) {
         for (std::size_t i = 0; i < roms.size(); ++i) {
-          if (roms[i].path == path && matches_search(roms[i], launcher_search)) {
+          if (roms[i].path == path && include_entry(roms[i])) {
             launcher_list.push_back(static_cast<int>(i));
             break;
           }
@@ -3880,13 +4114,13 @@ int main(int argc, char** argv) {
       }
     } else if (launcher_filter == LauncherFilter::Favorites) {
       for (std::size_t i = 0; i < roms.size(); ++i) {
-        if (favorite_paths.count(roms[i].path) && matches_search(roms[i], launcher_search)) {
+        if (favorite_paths.count(roms[i].path) && include_entry(roms[i])) {
           launcher_list.push_back(static_cast<int>(i));
         }
       }
     } else {
       for (std::size_t i = 0; i < roms.size(); ++i) {
-        if (matches_search(roms[i], launcher_search)) {
+        if (include_entry(roms[i])) {
           launcher_list.push_back(static_cast<int>(i));
         }
       }
@@ -3897,10 +4131,18 @@ int main(int argc, char** argv) {
     if (launcher_list.empty()) {
       launcher_index = 0;
       launcher_scroll = 0;
+      launcher_scroll_anim = 0.0f;
+      launcher_index_anim = 0.0f;
       return;
     }
     launcher_index = std::clamp(launcher_index, 0, static_cast<int>(launcher_list.size()) - 1);
     launcher_scroll = std::min(launcher_scroll, launcher_index);
+    launcher_scroll_anim = std::clamp(
+        launcher_scroll_anim, 0.0f,
+        static_cast<float>(std::max(0, static_cast<int>(launcher_list.size()) - 1)));
+    launcher_index_anim = std::clamp(
+        launcher_index_anim, 0.0f,
+        static_cast<float>(std::max(0, static_cast<int>(launcher_list.size()) - 1)));
   };
 
   auto selected_rom_index = [&]() -> int {
@@ -4005,6 +4247,9 @@ int main(int argc, char** argv) {
     launcher_scroll = 0;
     build_launcher_list();
     select_launcher_rom(selected_rom);
+    launcher_tab_index = launcher_library_tab_index(launcher_filter, launcher_system_filter);
+    launcher_scroll_anim = static_cast<float>(launcher_scroll);
+    launcher_index_anim = static_cast<float>(launcher_index);
   };
 
   if (launcher_enabled) {
@@ -4175,7 +4420,7 @@ int main(int argc, char** argv) {
     text += "F10 MENU\n";
     text += "F7 LAUNCHER\n";
     text += "/ SEARCH\n";
-    text += "TAB FILTER\n";
+    text += "TAB CYCLE TABS\n";
     text += "F FAVORITE\n";
     text += "O OVERRIDE\n";
     text += "S SETTINGS\n";
@@ -4268,6 +4513,8 @@ int main(int argc, char** argv) {
       case 8:
         if (launcher_enabled) {
           ui_mode = UiMode::Launcher;
+          launcher_focus = LauncherFocus::Shelf;
+          search_focus = false;
           refresh_roms();
         }
         break;
@@ -4282,6 +4529,8 @@ int main(int argc, char** argv) {
   auto settings_labels = [&]() {
     std::vector<std::string> labels;
     labels.emplace_back(std::string("THEME: ") + upper_ascii(ui_theme_name(ui_theme)));
+    labels.emplace_back(std::string("LAUNCHER DENSITY: ") +
+                        launcher_density_label(launcher_density));
     labels.emplace_back(std::string("SCALE: ") + std::to_string(scale));
     double fps_value = options.fps_override.value_or(core.target_fps());
     std::string fps_label = "FPS: ";
@@ -4329,7 +4578,10 @@ int main(int argc, char** argv) {
       case 0:
         set_theme(next_theme(ui_theme, 1));
         break;
-      case 4:
+      case 1:
+        launcher_density = next_launcher_density(launcher_density, 1);
+        break;
+      case 5:
         if (audio_device != 0) {
           audio_enabled = !audio_enabled;
           SDL_PauseAudioDevice(audio_device, audio_enabled ? 0 : 1);
@@ -4338,16 +4590,16 @@ int main(int argc, char** argv) {
           }
         }
         break;
-      case 6:
+      case 7:
         show_hud = !show_hud;
         break;
-      case 7:
+      case 8:
         hud_corner = next_hud_corner(hud_corner, 1);
         break;
-      case 8:
+      case 9:
         hud_compact = !hud_compact;
         break;
-      case 9:
+      case 10:
         if (hud_timeout_seconds <= 0) {
           hud_timeout_seconds = 5;
         } else if (hud_timeout_seconds < 30) {
@@ -4356,7 +4608,7 @@ int main(int argc, char** argv) {
           hud_timeout_seconds = 0;
         }
         break;
-      case 10:
+      case 11:
         if (game_loaded) {
           if (rom_override_active) {
             rom_override_active = false;
@@ -4415,25 +4667,25 @@ int main(int argc, char** argv) {
           crt_reset = true;
         }
         break;
-      case 11:
+      case 12:
         ui_mode = UiMode::InputMap;
         input_map_index = 0;
         rebind_active = false;
         break;
-      case 12:
+      case 13:
         show_help = !show_help;
         break;
-      case 13:
+      case 14:
         ui_mode = UiMode::Menu;
         break;
       default:
         break;
     }
-    if ((index == 6 || index == 7 || index == 8 || index == 9) && show_hud) {
+    if ((index == 7 || index == 8 || index == 9 || index == 10) && show_hud) {
       touch_hud();
     }
-    if (index == 4 || index == 6 || index == 7 || index == 8 ||
-        index == 9 || index == 10) {
+    if (index == 5 || index == 7 || index == 8 || index == 9 ||
+        index == 10 || index == 11) {
       if (rom_override_active && game_loaded && !rom_override_path.empty()) {
         save_rom_override(rom_override_path.string(),
                           scale,
@@ -4475,25 +4727,28 @@ int main(int argc, char** argv) {
       case 0:
         set_theme(next_theme(ui_theme, delta >= 0 ? 1 : -1));
         break;
-      case 1: {
+      case 1:
+        launcher_density = next_launcher_density(launcher_density, delta >= 0 ? 1 : -1);
+        break;
+      case 2: {
         int next_scale = std::clamp(scale + delta, 1, 8);
         if (next_scale != scale) {
           options.scale_override = next_scale;
           recalc_video();
         }
       } break;
-      case 2: {
+      case 3: {
         double step = 5.0;
         double next_fps = options.fps_override.value_or(core.target_fps());
         next_fps = std::max(0.0, next_fps + step * delta);
         options.fps_override = next_fps;
         reset_timing();
       } break;
-      case 3:
+      case 4:
         video_filter = next_video_filter(video_filter, delta >= 0 ? 1 : -1);
         crt_reset = true;
         break;
-      case 4:
+      case 5:
         if (audio_device != 0) {
           audio_enabled = !audio_enabled;
           SDL_PauseAudioDevice(audio_device, audio_enabled ? 0 : 1);
@@ -4502,38 +4757,38 @@ int main(int argc, char** argv) {
           }
         }
         break;
-      case 5: {
+      case 6: {
         int next_deadzone = std::clamp(input_config.axis_deadzone() + delta * 1000, 0, 32000);
         input_config.set_axis_deadzone(next_deadzone);
         save_input_map();
       } break;
-      case 6:
+      case 7:
         show_hud = !show_hud;
         break;
-      case 7:
+      case 8:
         hud_corner = next_hud_corner(hud_corner, delta >= 0 ? 1 : -1);
         break;
-      case 8:
+      case 9:
         hud_compact = !hud_compact;
         break;
-      case 9: {
+      case 10: {
         int step = 5;
         int next_timeout = hud_timeout_seconds + step * delta;
         next_timeout = std::clamp(next_timeout, 0, 30);
         hud_timeout_seconds = next_timeout;
       } break;
-      case 12:
+      case 13:
         show_help = !show_help;
         break;
       default:
         break;
     }
-    if ((index == 6 || index == 7 || index == 8 || index == 9) && show_hud) {
+    if ((index == 7 || index == 8 || index == 9 || index == 10) && show_hud) {
       touch_hud();
     }
-    if (index == 1 || index == 2 || index == 3 || index == 4 ||
-        index == 5 || index == 6 || index == 7 || index == 8 ||
-        index == 9) {
+    if (index == 2 || index == 3 || index == 4 || index == 5 ||
+        index == 6 || index == 7 || index == 8 || index == 9 ||
+        index == 10) {
       if (rom_override_active && game_loaded && !rom_override_path.empty()) {
         save_rom_override(rom_override_path.string(),
                           scale,
@@ -4563,7 +4818,7 @@ int main(int argc, char** argv) {
 
   auto toggle_rom_override_for = [&](const RomEntry& entry) {
     if (game_loaded && entry.path == current_rom_path) {
-      apply_settings_action(10);
+      apply_settings_action(11);
       return;
     }
     std::filesystem::path override_path = rom_override_path_for(entry.path);
@@ -4614,6 +4869,59 @@ int main(int argc, char** argv) {
     }
   };
 
+  auto set_launcher_library_tab = [&](int tab_index) {
+    int clamped = std::clamp(tab_index, 0, kLauncherLibraryTabCount - 1);
+    launcher_tab_index = clamped;
+    switch (clamped) {
+      case 1:
+        launcher_filter = LauncherFilter::Recents;
+        launcher_system_filter = LauncherSystemFilter::All;
+        break;
+      case 2:
+        launcher_filter = LauncherFilter::Favorites;
+        launcher_system_filter = LauncherSystemFilter::All;
+        break;
+      case 3:
+        launcher_filter = LauncherFilter::All;
+        launcher_system_filter = LauncherSystemFilter::GB;
+        break;
+      case 4:
+        launcher_filter = LauncherFilter::All;
+        launcher_system_filter = LauncherSystemFilter::GBC;
+        break;
+      case 5:
+        launcher_filter = LauncherFilter::All;
+        launcher_system_filter = LauncherSystemFilter::GBA;
+        break;
+      case 0:
+      default:
+        launcher_filter = LauncherFilter::All;
+        launcher_system_filter = LauncherSystemFilter::All;
+        break;
+    }
+  };
+
+  auto refresh_launcher_tab_from_filters = [&]() {
+    launcher_tab_index = launcher_library_tab_index(launcher_filter, launcher_system_filter);
+  };
+
+  auto apply_launcher_library_tab = [&](int tab_index) {
+    int selected = selected_rom_index();
+    set_launcher_library_tab(tab_index);
+    build_launcher_list();
+    select_launcher_rom(selected);
+    refresh_launcher_tab_from_filters();
+  };
+
+  auto cycle_launcher_library_tab = [&](int delta) {
+    int next = launcher_tab_index + delta;
+    while (next < 0) {
+      next += kLauncherLibraryTabCount;
+    }
+    next %= kLauncherLibraryTabCount;
+    apply_launcher_library_tab(next);
+  };
+
   auto launch_selected = [&]() {
     if (launcher_list.empty()) {
       return;
@@ -4646,10 +4954,7 @@ int main(int argc, char** argv) {
   };
 
   auto cycle_launcher_filter = [&](int delta) {
-    int selected = selected_rom_index();
-    launcher_filter = next_launcher_filter(launcher_filter, delta);
-    build_launcher_list();
-    select_launcher_rom(selected);
+    cycle_launcher_library_tab(delta);
   };
 
   auto toggle_favorite = [&]() {
@@ -4686,6 +4991,148 @@ int main(int argc, char** argv) {
       launcher_search.clear();
       build_launcher_list();
       select_launcher_rom(selected);
+    }
+  };
+
+  auto set_launcher_focus = [&](LauncherFocus focus) {
+    launcher_focus = focus;
+    search_focus = (focus == LauncherFocus::Search);
+  };
+
+  auto activate_launcher_focus = [&]() {
+    switch (launcher_focus) {
+      case LauncherFocus::Search:
+        set_launcher_focus(LauncherFocus::Search);
+        break;
+      case LauncherFocus::Filter:
+        cycle_launcher_filter(1);
+        break;
+      case LauncherFocus::Settings:
+        ui_mode = UiMode::Settings;
+        settings_index = 0;
+        set_launcher_focus(LauncherFocus::Shelf);
+        break;
+      case LauncherFocus::Tabs:
+        apply_launcher_library_tab(launcher_tab_index);
+        break;
+      case LauncherFocus::Shelf:
+      case LauncherFocus::Play:
+        launch_selected();
+        break;
+      case LauncherFocus::Favorite:
+        toggle_favorite();
+        break;
+      case LauncherFocus::Override: {
+        int selected = selected_rom_index();
+        if (selected >= 0 && selected < static_cast<int>(roms.size())) {
+          toggle_rom_override_for(roms[static_cast<std::size_t>(selected)]);
+        }
+        break;
+      }
+    }
+  };
+
+  auto move_launcher_focus_horizontal = [&](int delta) {
+    if (delta == 0) {
+      return;
+    }
+    if (launcher_focus == LauncherFocus::Tabs) {
+      cycle_launcher_library_tab(delta);
+      return;
+    }
+    if (launcher_focus == LauncherFocus::Shelf) {
+      move_launcher(delta);
+      return;
+    }
+    if (delta < 0) {
+      switch (launcher_focus) {
+        case LauncherFocus::Search:
+          break;
+        case LauncherFocus::Filter:
+          set_launcher_focus(LauncherFocus::Search);
+          break;
+        case LauncherFocus::Settings:
+          set_launcher_focus(LauncherFocus::Filter);
+          break;
+        case LauncherFocus::Tabs:
+          break;
+        case LauncherFocus::Play:
+          break;
+        case LauncherFocus::Favorite:
+          set_launcher_focus(LauncherFocus::Play);
+          break;
+        case LauncherFocus::Override:
+          set_launcher_focus(LauncherFocus::Favorite);
+          break;
+        case LauncherFocus::Shelf:
+          break;
+      }
+      return;
+    }
+    switch (launcher_focus) {
+      case LauncherFocus::Search:
+        set_launcher_focus(LauncherFocus::Filter);
+        break;
+      case LauncherFocus::Filter:
+        set_launcher_focus(LauncherFocus::Settings);
+        break;
+      case LauncherFocus::Settings:
+        break;
+      case LauncherFocus::Tabs:
+        break;
+      case LauncherFocus::Play:
+        set_launcher_focus(LauncherFocus::Favorite);
+        break;
+      case LauncherFocus::Favorite:
+        set_launcher_focus(LauncherFocus::Override);
+        break;
+      case LauncherFocus::Override:
+        break;
+      case LauncherFocus::Shelf:
+        break;
+    }
+  };
+
+  auto move_launcher_focus_vertical = [&](int delta) {
+    if (delta == 0) {
+      return;
+    }
+    if (delta < 0) {
+      switch (launcher_focus) {
+        case LauncherFocus::Search:
+        case LauncherFocus::Filter:
+        case LauncherFocus::Settings:
+          break;
+        case LauncherFocus::Tabs:
+          set_launcher_focus(LauncherFocus::Filter);
+          break;
+        case LauncherFocus::Shelf:
+          set_launcher_focus(LauncherFocus::Tabs);
+          break;
+        case LauncherFocus::Play:
+        case LauncherFocus::Favorite:
+        case LauncherFocus::Override:
+          set_launcher_focus(LauncherFocus::Shelf);
+          break;
+      }
+      return;
+    }
+    switch (launcher_focus) {
+      case LauncherFocus::Search:
+      case LauncherFocus::Filter:
+      case LauncherFocus::Settings:
+        set_launcher_focus(LauncherFocus::Tabs);
+        break;
+      case LauncherFocus::Tabs:
+        set_launcher_focus(LauncherFocus::Shelf);
+        break;
+      case LauncherFocus::Shelf:
+        set_launcher_focus(LauncherFocus::Play);
+        break;
+      case LauncherFocus::Play:
+      case LauncherFocus::Favorite:
+      case LauncherFocus::Override:
+        break;
     }
   };
 
@@ -4818,6 +5265,17 @@ int main(int argc, char** argv) {
     if (window) {
       SDL_GetWindowSize(window, &window_w, &window_h);
     }
+    auto launcher_tv_density_for_height = [&](int height) {
+      switch (launcher_density) {
+        case LauncherDensity::TvCompact:
+          return false;
+        case LauncherDensity::TvLarge:
+          return true;
+        case LauncherDensity::Auto:
+        default:
+          return height >= 900;
+      }
+    };
 
     auto menu_panel_rect = [&]() {
       int panel_width = window_w > 520 ? 520 : window_w - 20;
@@ -4854,42 +5312,97 @@ int main(int argc, char** argv) {
 
     auto launcher_layout = [&]() {
       LauncherLayout layout;
-      layout.header = SDL_Rect{0, 0, window_w, 44};
-      int search_box_w = std::min(260, window_w / 3);
-      int search_box_h = 22;
-      int search_box_x = (window_w - search_box_w) / 2;
-      int search_box_y = layout.header.y + 11;
-      layout.search_box = SDL_Rect{search_box_x, search_box_y, search_box_w, search_box_h};
+      bool tv_density = launcher_tv_density_for_height(window_h);
+      layout.top_bar = SDL_Rect{0, 0, window_w, tv_density ? 64 : 56};
+      int margin = std::max(12, window_w / 64);
+      int content_w = std::max(220, window_w - margin * 2);
+      int top_y = layout.top_bar.y + 14;
+      int search_h = tv_density ? 32 : 28;
+      int top_gap = 12;
+      int settings_w = text_width("SETTINGS", 2) + 20;
+      int filter_w = text_width("FILTER: FAVORITES", 2) + 20;
+      int search_w = std::max(140, content_w - settings_w - filter_w - top_gap * 2);
+      search_w = std::min(search_w, 420);
+      layout.search_box = SDL_Rect{margin, top_y, search_w, search_h};
+      layout.filter_button =
+          SDL_Rect{layout.search_box.x + layout.search_box.w + top_gap, top_y, filter_w, search_h};
+      layout.settings_button = SDL_Rect{margin + content_w - settings_w, top_y, settings_w, search_h};
+      int max_filter_w = layout.settings_button.x - top_gap - layout.filter_button.x;
+      if (max_filter_w < layout.filter_button.w) {
+        layout.filter_button.w = std::max(80, max_filter_w);
+      }
 
-      std::string title = "GBEMU LAUNCHER";
-      int title_w = text_width(title, 2);
-      int settings_w = text_width("SETTINGS", 2) + 12;
-      layout.settings_button = SDL_Rect{14 + title_w + 12, 9, settings_w, 24};
+      int content_top = layout.top_bar.h + 8;
+      int tabs_h = tv_density ? 42 : 34;
+      layout.tabs_panel = SDL_Rect{margin, content_top, content_w, tabs_h};
+      int tab_gap = 8;
+      int tab_w = (layout.tabs_panel.w - tab_gap * (kLauncherLibraryTabCount - 1)) /
+                  kLauncherLibraryTabCount;
+      if (tab_w < 48) {
+        tab_gap = 4;
+        tab_w = (layout.tabs_panel.w - tab_gap * (kLauncherLibraryTabCount - 1)) /
+                kLauncherLibraryTabCount;
+      }
+      tab_w = std::max(32, tab_w);
+      int tab_y = layout.tabs_panel.y + 3;
+      int tab_h = layout.tabs_panel.h - 6;
+      for (int i = 0; i < kLauncherLibraryTabCount; ++i) {
+        int tab_x = layout.tabs_panel.x + i * (tab_w + tab_gap);
+        layout.tabs[static_cast<std::size_t>(i)] = SDL_Rect{tab_x, tab_y, tab_w, tab_h};
+      }
 
-      std::string filter_label = "FILTER: " + upper_ascii(launcher_filter_name(launcher_filter));
-      int filter_w = text_width(filter_label, 2);
-      layout.filter_hit = SDL_Rect{window_w - 14 - filter_w, 20, filter_w, 14};
+      int content_main_top = layout.tabs_panel.y + layout.tabs_panel.h + 8;
+      int action_h = tv_density ? 72 : 60;
+      int action_y = window_h - margin - action_h;
+      action_y = std::max(action_y, content_main_top + 120);
+      layout.action_bar = SDL_Rect{margin, action_y, content_w, action_h};
 
-      int margin = 16;
-      int top = layout.header.h + 8;
-      int list_w = (window_w * 2) / 3;
-      int detail_w = window_w - list_w - margin * 3;
-      layout.list_panel = SDL_Rect{margin, top, list_w, window_h - top - margin};
-      layout.detail_panel = SDL_Rect{layout.list_panel.x + layout.list_panel.w + margin,
-                                     top, detail_w, layout.list_panel.h};
-      layout.card_h = 38;
-      layout.visible = std::max(1, (layout.list_panel.h - 16) / layout.card_h);
-      layout.start_y = layout.list_panel.y + 8;
+      int shelf_gap = 12;
+      int shelf_h = tv_density ? std::clamp(window_h / 4, 120, 220)
+                               : std::clamp(window_h / 4, 100, 190);
+      int shelf_y = action_y - shelf_h - shelf_gap;
+      if (shelf_y < content_main_top + 100) {
+        shelf_h = std::max(90, action_y - content_main_top - 100);
+        shelf_y = action_y - shelf_h - shelf_gap;
+      }
+      layout.shelf_panel = SDL_Rect{margin, shelf_y, content_w, shelf_h};
 
-      int button_h = 24;
-      int button_w = (layout.detail_panel.w - 30) / 2;
-      int override_y = layout.detail_panel.y + layout.detail_panel.h - 92;
-      int button_y = layout.detail_panel.y + layout.detail_panel.h - 60;
-      layout.override_button = SDL_Rect{layout.detail_panel.x + 10, override_y,
-                                        layout.detail_panel.w - 20, button_h};
-      layout.play_button = SDL_Rect{layout.detail_panel.x + 10, button_y, button_w, button_h};
-      layout.favorite_button = SDL_Rect{layout.play_button.x + button_w + 10, button_y,
-                                        button_w, button_h};
+      int hero_h = shelf_y - content_main_top - shelf_gap;
+      layout.hero_panel = SDL_Rect{margin, content_main_top, content_w, std::max(96, hero_h)};
+      int hero_pad = tv_density ? 16 : 12;
+      int art_w = std::clamp(layout.hero_panel.w / 3, 120, 260);
+      layout.hero_art =
+          SDL_Rect{layout.hero_panel.x + hero_pad, layout.hero_panel.y + hero_pad, art_w,
+                   std::max(72, layout.hero_panel.h - hero_pad * 2)};
+      int meta_x = layout.hero_art.x + layout.hero_art.w + 14;
+      int meta_w = layout.hero_panel.x + layout.hero_panel.w - hero_pad - meta_x;
+      layout.hero_meta =
+          SDL_Rect{meta_x, layout.hero_panel.y + hero_pad, std::max(80, meta_w),
+                   std::max(72, layout.hero_panel.h - hero_pad * 2)};
+
+      int shelf_pad = 10;
+      layout.shelf_track = SDL_Rect{layout.shelf_panel.x + shelf_pad, layout.shelf_panel.y + 8,
+                                    std::max(80, layout.shelf_panel.w - shelf_pad * 2),
+                                    std::max(60, layout.shelf_panel.h - 16)};
+      layout.card_h = std::max(72, layout.shelf_track.h - 24);
+      layout.card_w = std::clamp((layout.card_h * 6) / 5, 110, 240);
+      layout.card_gap = std::max(8, layout.card_w / 12);
+      layout.visible = std::max(1, (layout.shelf_track.w + layout.card_gap) /
+                                       (layout.card_w + layout.card_gap));
+      int used_w = layout.visible * layout.card_w + (layout.visible - 1) * layout.card_gap;
+      layout.start_x = layout.shelf_track.x + std::max(0, (layout.shelf_track.w - used_w) / 2);
+
+      int button_pad = 12;
+      int button_gap = 10;
+      int button_h = layout.action_bar.h - 18;
+      int button_y = layout.action_bar.y + (layout.action_bar.h - button_h) / 2;
+      int button_w = (layout.action_bar.w - button_pad * 2 - button_gap * 2) / 3;
+      int button_x = layout.action_bar.x + button_pad;
+      layout.play_button = SDL_Rect{button_x, button_y, button_w, button_h};
+      layout.favorite_button =
+          SDL_Rect{layout.play_button.x + button_w + button_gap, button_y, button_w, button_h};
+      layout.override_button =
+          SDL_Rect{layout.favorite_button.x + button_w + button_gap, button_y, button_w, button_h};
       return layout;
     };
 
@@ -4911,7 +5424,7 @@ int main(int argc, char** argv) {
             if (!launcher_search.empty()) {
               clear_search();
             } else {
-              search_focus = false;
+              set_launcher_focus(LauncherFocus::Shelf);
             }
             continue;
           }
@@ -4956,6 +5469,7 @@ int main(int argc, char** argv) {
         if (key == SDLK_F7) {
           if (launcher_enabled) {
             ui_mode = UiMode::Launcher;
+            set_launcher_focus(LauncherFocus::Shelf);
             refresh_roms();
           }
           continue;
@@ -5079,19 +5593,30 @@ int main(int argc, char** argv) {
 
         if (ui_mode == UiMode::Launcher) {
           if (key == SDLK_UP) {
-            move_launcher(-1);
+            move_launcher_focus_vertical(-1);
           } else if (key == SDLK_DOWN) {
-            move_launcher(1);
+            move_launcher_focus_vertical(1);
           } else if (key == SDLK_SLASH || (key == SDLK_f && (event.key.keysym.mod & KMOD_CTRL))) {
-            search_focus = true;
+            set_launcher_focus(LauncherFocus::Search);
           } else if (key == SDLK_LEFT) {
-            set_theme(next_theme(ui_theme, -1));
+            move_launcher_focus_horizontal(-1);
           } else if (key == SDLK_RIGHT) {
-            set_theme(next_theme(ui_theme, 1));
+            move_launcher_focus_horizontal(1);
           } else if (key == SDLK_RETURN || key == SDLK_SPACE) {
-            launch_selected();
+            activate_launcher_focus();
           } else if (key == SDLK_TAB) {
+            set_launcher_focus(LauncherFocus::Tabs);
+            cycle_launcher_filter((event.key.keysym.mod & KMOD_SHIFT) ? -1 : 1);
+          } else if (key == SDLK_PAGEUP) {
+            set_launcher_focus(LauncherFocus::Tabs);
+            cycle_launcher_filter(-1);
+          } else if (key == SDLK_PAGEDOWN) {
+            set_launcher_focus(LauncherFocus::Tabs);
             cycle_launcher_filter(1);
+          } else if (key == SDLK_LEFTBRACKET) {
+            set_theme(next_theme(ui_theme, -1));
+          } else if (key == SDLK_RIGHTBRACKET) {
+            set_theme(next_theme(ui_theme, 1));
           } else if (key == SDLK_BACKSPACE && search_focus) {
             if (!launcher_search.empty()) {
               int selected = selected_rom_index();
@@ -5208,12 +5733,30 @@ int main(int argc, char** argv) {
         } else if (ui_mode == UiMode::Launcher) {
           LauncherLayout layout = launcher_layout();
           launcher_visible = layout.visible;
-          if (point_in_rect(mx, my, layout.list_panel)) {
-            int rel_y = my - layout.start_y;
-            if (rel_y >= 0) {
-              int idx = rel_y / layout.card_h + launcher_scroll;
+          bool tab_hover = false;
+          for (int i = 0; i < kLauncherLibraryTabCount; ++i) {
+            const SDL_Rect& tab_rect = layout.tabs[static_cast<std::size_t>(i)];
+            if (point_in_rect(mx, my, tab_rect)) {
+              launcher_tab_index = i;
+              tab_hover = true;
+              break;
+            }
+          }
+          if (tab_hover) {
+            set_launcher_focus(LauncherFocus::Tabs);
+          } else if (point_in_rect(mx, my, layout.shelf_panel)) {
+            int stride = layout.card_w + layout.card_gap;
+            int card_y = layout.shelf_track.y + (layout.shelf_track.h - layout.card_h) / 2;
+            int rel_x = mx - layout.start_x;
+            if (stride > 0 && rel_x >= 0) {
+              int idx = launcher_scroll + (rel_x / stride);
               if (idx >= 0 && idx < static_cast<int>(launcher_list.size())) {
-                launcher_index = idx;
+                SDL_Rect card{layout.start_x + (idx - launcher_scroll) * stride, card_y,
+                              layout.card_w, layout.card_h};
+                if (point_in_rect(mx, my, card)) {
+                  launcher_index = idx;
+                  set_launcher_focus(LauncherFocus::Shelf);
+                }
               }
             }
           }
@@ -5286,32 +5829,56 @@ int main(int argc, char** argv) {
             LauncherLayout layout = launcher_layout();
             launcher_visible = layout.visible;
             if (point_in_rect(mx, my, layout.search_box)) {
-              search_focus = true;
+              set_launcher_focus(LauncherFocus::Search);
             } else {
               search_focus = false;
+              if (launcher_focus == LauncherFocus::Search) {
+                launcher_focus = LauncherFocus::Shelf;
+              }
             }
-            if (point_in_rect(mx, my, layout.settings_button)) {
+            bool clicked_tab = false;
+            for (int i = 0; i < kLauncherLibraryTabCount; ++i) {
+              if (point_in_rect(mx, my, layout.tabs[static_cast<std::size_t>(i)])) {
+                set_launcher_focus(LauncherFocus::Tabs);
+                apply_launcher_library_tab(i);
+                clicked_tab = true;
+                break;
+              }
+            }
+            if (!clicked_tab && point_in_rect(mx, my, layout.settings_button)) {
+              set_launcher_focus(LauncherFocus::Settings);
               ui_mode = UiMode::Settings;
               settings_index = 0;
-            } else if (point_in_rect(mx, my, layout.filter_hit)) {
+            } else if (!clicked_tab && point_in_rect(mx, my, layout.filter_button)) {
+              set_launcher_focus(LauncherFocus::Filter);
               cycle_launcher_filter(1);
-            } else if (point_in_rect(mx, my, layout.override_button)) {
+            } else if (!clicked_tab && point_in_rect(mx, my, layout.play_button)) {
+              set_launcher_focus(LauncherFocus::Play);
+              launch_selected();
+            } else if (!clicked_tab && point_in_rect(mx, my, layout.favorite_button)) {
+              set_launcher_focus(LauncherFocus::Favorite);
+              toggle_favorite();
+            } else if (!clicked_tab && point_in_rect(mx, my, layout.override_button)) {
+              set_launcher_focus(LauncherFocus::Override);
               int selected = selected_rom_index();
               if (selected >= 0 && selected < static_cast<int>(roms.size())) {
                 toggle_rom_override_for(roms[selected]);
               }
-            } else if (point_in_rect(mx, my, layout.play_button)) {
-              launch_selected();
-            } else if (point_in_rect(mx, my, layout.favorite_button)) {
-              toggle_favorite();
-            } else if (point_in_rect(mx, my, layout.list_panel)) {
-              int rel_y = my - layout.start_y;
-              if (rel_y >= 0) {
-                int idx = rel_y / layout.card_h + launcher_scroll;
+            } else if (!clicked_tab && point_in_rect(mx, my, layout.shelf_panel)) {
+              set_launcher_focus(LauncherFocus::Shelf);
+              int stride = layout.card_w + layout.card_gap;
+              int card_y = layout.shelf_track.y + (layout.shelf_track.h - layout.card_h) / 2;
+              int rel_x = mx - layout.start_x;
+              if (stride > 0 && rel_x >= 0) {
+                int idx = launcher_scroll + (rel_x / stride);
                 if (idx >= 0 && idx < static_cast<int>(launcher_list.size())) {
-                  launcher_index = idx;
-                  if (event.button.clicks >= 2) {
-                    launch_selected();
+                  SDL_Rect card{layout.start_x + (idx - launcher_scroll) * stride, card_y,
+                                layout.card_w, layout.card_h};
+                  if (point_in_rect(mx, my, card)) {
+                    launcher_index = idx;
+                    if (event.button.clicks >= 2) {
+                      launch_selected();
+                    }
                   }
                 }
               }
@@ -5405,29 +5972,43 @@ int main(int argc, char** argv) {
 
         if (ui_mode == UiMode::Launcher && pressed) {
           if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
-            move_launcher(-1);
+            move_launcher_focus_vertical(-1);
           } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
-            move_launcher(1);
+            move_launcher_focus_vertical(1);
           } else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
-            set_theme(next_theme(ui_theme, -1));
+            move_launcher_focus_horizontal(-1);
           } else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
-            set_theme(next_theme(ui_theme, 1));
+            move_launcher_focus_horizontal(1);
           } else if (button == SDL_CONTROLLER_BUTTON_A || button == SDL_CONTROLLER_BUTTON_START) {
-            launch_selected();
+            activate_launcher_focus();
           } else if (button == SDL_CONTROLLER_BUTTON_X) {
+            set_launcher_focus(LauncherFocus::Tabs);
             cycle_launcher_filter(1);
           } else if (button == SDL_CONTROLLER_BUTTON_Y) {
+            set_launcher_focus(LauncherFocus::Favorite);
             toggle_favorite();
+          } else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
+            set_launcher_focus(LauncherFocus::Tabs);
+            cycle_launcher_filter(-1);
           } else if (button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
-            int selected = selected_rom_index();
-            if (selected >= 0 && selected < static_cast<int>(roms.size())) {
-              toggle_rom_override_for(roms[selected]);
-            }
+            set_launcher_focus(LauncherFocus::Tabs);
+            cycle_launcher_filter(1);
+          } else if (button == SDL_CONTROLLER_BUTTON_LEFTSTICK) {
+            set_theme(next_theme(ui_theme, -1));
+          } else if (button == SDL_CONTROLLER_BUTTON_RIGHTSTICK) {
+            set_theme(next_theme(ui_theme, 1));
+          } else if (button == SDL_CONTROLLER_BUTTON_BACK) {
+            ui_mode = UiMode::Settings;
+            settings_index = 0;
           } else if (button == SDL_CONTROLLER_BUTTON_B) {
-            if (game_loaded) {
-              ui_mode = UiMode::Hidden;
+            if (search_focus) {
+              set_launcher_focus(LauncherFocus::Shelf);
             } else {
-              running = false;
+              if (game_loaded) {
+                ui_mode = UiMode::Hidden;
+              } else {
+                running = false;
+              }
             }
           }
           continue;
@@ -5778,62 +6359,143 @@ int main(int argc, char** argv) {
     } else if (ui_mode == UiMode::Launcher) {
       LauncherLayout layout = launcher_layout();
       launcher_visible = layout.visible;
-      SDL_Rect header = layout.header;
       float anim = ui_opacity;
-      fill_rect(renderer, header, with_alpha(theme.bg_secondary, anim));
       SDL_Color text = with_alpha(theme.text, anim);
       SDL_Color accent = with_alpha(theme.accent, anim);
-      draw_text(renderer, 14, 12, 2, "GBEMU LAUNCHER", text);
+      bool tv_density = launcher_tv_density_for_height(window_h);
+      int title_scale = tv_density ? 3 : 2;
+      int body_scale = 2;
+      int chip_scale = tv_density ? 2 : 1;
+      int tab_scale = tv_density ? 2 : 1;
+      int card_title_scale = tv_density ? 2 : 1;
+      float focus_pulse = 0.5f + 0.5f * std::sin(static_cast<float>(frame_count) * 0.11f);
+      if (launcher_list.empty()) {
+        launcher_scroll_anim = 0.0f;
+        launcher_index_anim = 0.0f;
+      } else {
+        launcher_scroll_anim += (static_cast<float>(launcher_scroll) - launcher_scroll_anim) * 0.24f;
+        launcher_index_anim += (static_cast<float>(launcher_index) - launcher_index_anim) * 0.18f;
+      }
+      fill_rect(renderer, layout.top_bar, with_alpha(theme.bg_secondary, anim));
+      draw_text(renderer, 14, tv_density ? 10 : 8, title_scale, "GBEMU GAMING MODE", text);
+
+      auto inflate_rect = [&](const SDL_Rect& rect, int grow) {
+        SDL_Rect out = rect;
+        out.x -= grow;
+        out.y -= grow;
+        out.w += grow * 2;
+        out.h += grow * 2;
+        return out;
+      };
+
+      auto highlight_focus = [&](const SDL_Rect& rect, bool active, int alpha, int base_grow = 0) {
+        if (!active) {
+          return;
+        }
+        int grow = base_grow + static_cast<int>(std::round(focus_pulse * 2.0f));
+        SDL_Rect glow = inflate_rect(rect, grow);
+        fill_rect(renderer, glow, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
+                                            static_cast<Uint8>(alpha * anim)});
+        SDL_SetRenderDrawColor(renderer, theme.accent.r, theme.accent.g, theme.accent.b,
+                               static_cast<Uint8>(255 * anim));
+        SDL_RenderDrawRect(renderer, &glow);
+        SDL_Rect inner{glow.x + 1, glow.y + 1, std::max(0, glow.w - 2), std::max(0, glow.h - 2)};
+        if (inner.w > 2 && inner.h > 2) {
+          SDL_Color inner_border = with_alpha(theme.text, anim * 0.75f);
+          SDL_SetRenderDrawColor(renderer, inner_border.r, inner_border.g, inner_border.b,
+                                 inner_border.a);
+          SDL_RenderDrawRect(renderer, &inner);
+        }
+      };
+
+      auto trim_text_to_width = [&](std::string value, int max_w, int scale) {
+        if (max_w <= 0) {
+          return std::string();
+        }
+        bool trimmed = false;
+        while (!value.empty() && text_width(value, scale) > max_w) {
+          value.pop_back();
+          trimmed = true;
+        }
+        if (trimmed && value.size() > 3) {
+          value.resize(value.size() - 3);
+          value += "...";
+        }
+        return value;
+      };
+
       SDL_Rect search_box = layout.search_box;
-      fill_rect(renderer, search_box, with_alpha(theme.panel, anim));
-      SDL_Color border = search_focus ? accent : with_alpha(theme.panel_border, anim);
-      SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, border.a);
-      SDL_RenderDrawRect(renderer, &search_box);
+      SDL_Rect filter_button = layout.filter_button;
+      SDL_Rect settings_button = layout.settings_button;
+      draw_panel_alpha(renderer, search_box, theme, anim);
+      draw_panel_alpha(renderer, filter_button, theme, anim);
+      draw_panel_alpha(renderer, settings_button, theme, anim);
+      highlight_focus(search_box,
+                      launcher_focus == LauncherFocus::Search ||
+                          point_in_rect(mouse_x, mouse_y, search_box),
+                      70);
+      highlight_focus(filter_button,
+                      launcher_focus == LauncherFocus::Filter ||
+                          point_in_rect(mouse_x, mouse_y, filter_button),
+                      60);
+      highlight_focus(settings_button,
+                      launcher_focus == LauncherFocus::Settings ||
+                          point_in_rect(mouse_x, mouse_y, settings_button),
+                      60);
       std::string search_text;
       if (launcher_search.empty()) {
-        search_text = search_focus ? "TYPE TO SEARCH" : "/ TO SEARCH";
+        search_text = search_focus ? "TYPE TO SEARCH" : "SEARCH ROMS (/)";
       } else {
         search_text = launcher_search;
       }
       if (search_focus && ((frame_count / 30) % 2 == 0)) {
         search_text.push_back('|');
       }
-      std::string search_display = upper_ascii(search_text);
-      int max_search_w = search_box.w - 10;
-      while (text_width(search_display, 2) > max_search_w && !search_display.empty()) {
-        search_display.erase(search_display.begin());
-      }
-      draw_text(renderer, search_box.x + 6, search_box.y + 6, 2, search_display, text);
-
-      SDL_Rect settings_button = layout.settings_button;
-      draw_panel_alpha(renderer, settings_button, theme, anim);
-      if (point_in_rect(mouse_x, mouse_y, settings_button)) {
-        fill_rect(renderer, settings_button,
-                  SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
-                            static_cast<Uint8>(60 * anim)});
-      }
-      draw_text(renderer, settings_button.x + 6, settings_button.y + 6, 2, "SETTINGS", text);
-
+      std::string search_display =
+          trim_text_to_width(upper_ascii(search_text), search_box.w - 12, body_scale);
+      draw_text(renderer, search_box.x + 6, search_box.y + (tv_density ? 8 : 6), body_scale,
+                search_display, text);
+      std::string filter_label =
+          std::string("VIEW: ") + launcher_library_tab_name(launcher_tab_index);
+      filter_label = trim_text_to_width(filter_label, filter_button.w - 10, body_scale);
+      draw_text(renderer, filter_button.x + 6, filter_button.y + (tv_density ? 8 : 6), body_scale,
+                filter_label, text);
+      draw_text(renderer, settings_button.x + 6, settings_button.y + (tv_density ? 8 : 6), body_scale,
+                "SETTINGS", text);
       std::string theme_label = upper_ascii(ui_theme_name(ui_theme));
-      int theme_w = text_width(theme_label, 2);
-      draw_text(renderer, window_w - 14 - theme_w, 4, 2, theme_label, accent);
-      std::string filter_label = "FILTER: " + upper_ascii(launcher_filter_name(launcher_filter));
+      int theme_w = text_width(theme_label, body_scale);
+      draw_text(renderer, window_w - 14 - theme_w, tv_density ? 6 : 4, body_scale, theme_label, accent);
       std::string count_label = std::to_string(launcher_list.size()) + "/" + std::to_string(roms.size());
-      int filter_w = text_width(filter_label, 2);
-      int count_w = text_width(count_label, 2);
-      draw_text(renderer, window_w - 14 - filter_w, 20, 2, filter_label, text);
-      draw_text(renderer, window_w - 14 - count_w, 30, 2, count_label, accent);
+      int count_w = text_width(count_label, body_scale);
+      draw_text(renderer, window_w - 14 - count_w, tv_density ? 30 : 24, body_scale, count_label, accent);
 
-      SDL_Rect list_panel = layout.list_panel;
-      SDL_Rect detail_panel = layout.detail_panel;
-      SDL_Rect list_anim = list_panel;
-      SDL_Rect detail_anim = detail_panel;
-      list_anim.y += static_cast<int>((1.0f - anim) * 14.0f);
-      detail_anim.y += static_cast<int>((1.0f - anim) * 14.0f);
-      draw_panel_alpha(renderer, list_anim, theme, anim);
-      draw_panel_alpha(renderer, detail_anim, theme, anim);
+      draw_panel_alpha(renderer, layout.tabs_panel, theme, anim);
+      for (int i = 0; i < kLauncherLibraryTabCount; ++i) {
+        SDL_Rect tab_rect = layout.tabs[static_cast<std::size_t>(i)];
+        draw_panel_alpha(renderer, tab_rect, theme, anim);
+        bool selected_tab = (i == launcher_tab_index);
+        bool focused_tab = selected_tab && launcher_focus == LauncherFocus::Tabs;
+        if (selected_tab) {
+          fill_rect(renderer, tab_rect, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
+                                                  static_cast<Uint8>((focused_tab ? 90 : 62) * anim)});
+        }
+        highlight_focus(tab_rect, focused_tab || point_in_rect(mouse_x, mouse_y, tab_rect), 56);
+        std::string tab_name = launcher_library_tab_name(i);
+        tab_name = trim_text_to_width(tab_name, tab_rect.w - 8, tab_scale);
+        int text_w = text_width(tab_name, tab_scale);
+        int tx = tab_rect.x + std::max(3, (tab_rect.w - text_w) / 2);
+        int tab_text_y = tab_rect.y + std::max(4, (tab_rect.h - (7 * tab_scale)) / 2);
+        draw_text(renderer, tx, tab_text_y, tab_scale, tab_name, text);
+      }
 
-      int card_h = layout.card_h;
+      draw_panel_alpha(renderer, layout.hero_panel, theme, anim);
+      draw_panel_alpha(renderer, layout.shelf_panel, theme, anim);
+      draw_panel_alpha(renderer, layout.action_bar, theme, anim);
+      highlight_focus(layout.shelf_panel,
+                      launcher_focus == LauncherFocus::Shelf ||
+                          point_in_rect(mouse_x, mouse_y, layout.shelf_panel),
+                      42);
+
       int visible = layout.visible;
       if (launcher_index < launcher_scroll) {
         launcher_scroll = launcher_index;
@@ -5852,136 +6514,215 @@ int main(int argc, char** argv) {
         return SDL_Color{r, g, b, 255};
       };
 
-      int start_y = layout.start_y;
       if (roms.empty()) {
-        draw_text(renderer, list_anim.x + 12, list_anim.y + 12, 2, "NO ROMS FOUND", text);
+        draw_text(renderer, layout.hero_panel.x + 12, layout.hero_panel.y + 14, 2,
+                  "NO ROMS FOUND IN TEST-GAMES OR ROMS", text);
       } else if (launcher_list.empty()) {
-        draw_text(renderer, list_anim.x + 12, list_anim.y + 12, 2, "NO MATCHES", text);
+        draw_text(renderer, layout.hero_panel.x + 12, layout.hero_panel.y + 14, 2,
+                  "NO MATCHES FOR CURRENT FILTER/SEARCH", text);
       } else {
-        for (int i = 0; i < visible; ++i) {
-          int idx = launcher_scroll + i;
-          if (idx >= static_cast<int>(launcher_list.size())) {
-            break;
+        int rom_index = launcher_list[launcher_index];
+        const auto& entry = roms[rom_index];
+
+        int hero_slide_x = static_cast<int>(
+            std::round((launcher_index_anim - static_cast<float>(launcher_index)) * 28.0f));
+        SDL_Rect hero_art = layout.hero_art;
+        hero_art.x += hero_slide_x;
+        draw_panel_alpha(renderer, hero_art, theme, anim);
+        if (CoverTexture* cover = get_cover_texture(entry.cover_path)) {
+          SDL_Rect dst = fit_rect(hero_art.w, hero_art.h, cover->width, cover->height,
+                                  hero_art.x, hero_art.y);
+          SDL_RenderCopy(renderer, cover->texture, nullptr, &dst);
+        } else {
+          SDL_Color chip = color_from_hash(entry.title);
+          SDL_Rect chip_rect{hero_art.x + 10, hero_art.y + 10, hero_art.w - 20, hero_art.h - 20};
+          fill_rect(renderer, chip_rect, with_alpha(chip, anim));
+          draw_text(renderer, hero_art.x + 14, hero_art.y + 16, 2, "NO COVER", text);
+        }
+
+        SDL_Rect hero_meta = layout.hero_meta;
+        hero_meta.x += hero_slide_x;
+        std::string title = trim_text_to_width(upper_ascii(entry.title), hero_meta.w - 4, body_scale);
+        draw_text(renderer, hero_meta.x, hero_meta.y + 2, body_scale, title, text);
+        std::string info = "SYSTEM: " + system_short(entry.system);
+        draw_text(renderer, hero_meta.x, hero_meta.y + 24, body_scale, info, text);
+        std::string size = "SIZE: " + format_bytes(entry.size);
+        draw_text(renderer, hero_meta.x, hero_meta.y + 40, body_scale, size, text);
+        std::string file = std::filesystem::path(entry.path).filename().string();
+        std::string path = trim_text_to_width(upper_ascii(file), hero_meta.w - 4, body_scale);
+        draw_text(renderer, hero_meta.x, hero_meta.y + 56, body_scale, path, text);
+
+        int badge_y = hero_meta.y + 76;
+        if (favorite_paths.count(entry.path)) {
+          draw_text(renderer, hero_meta.x, badge_y, body_scale, "FAVORITE", accent);
+          badge_y += 14;
+        }
+        if (rom_override_exists(entry.path)) {
+          draw_text(renderer, hero_meta.x, badge_y, body_scale, "PER-ROM OVERRIDE", accent);
+          badge_y += 14;
+        }
+        std::string helper = "DPAD LEFT/RIGHT: BROWSE   A/START: PLAY";
+        draw_text(renderer, hero_meta.x, badge_y, body_scale, helper, text);
+
+        int stride = layout.card_w + layout.card_gap;
+        int card_y = layout.shelf_track.y + (layout.shelf_track.h - layout.card_h) / 2;
+        float scroll_anim = std::clamp(
+            launcher_scroll_anim, 0.0f,
+            static_cast<float>(std::max(0, static_cast<int>(launcher_list.size()) - 1)));
+        int first_idx = std::max(0, static_cast<int>(std::floor(scroll_anim)) - 1);
+        int last_idx = std::min(static_cast<int>(launcher_list.size()) - 1, first_idx + visible + 3);
+        for (int idx = first_idx; idx <= last_idx; ++idx) {
+          float fx = static_cast<float>(layout.start_x) +
+                     (static_cast<float>(idx) - scroll_anim) * static_cast<float>(stride);
+          SDL_Rect card_base{static_cast<int>(std::round(fx)), card_y, layout.card_w, layout.card_h};
+          if (card_base.x + card_base.w < layout.shelf_track.x - 12 ||
+              card_base.x > layout.shelf_track.x + layout.shelf_track.w + 12) {
+            continue;
           }
-          int rom_index = launcher_list[idx];
-          const auto& entry = roms[rom_index];
-          SDL_Rect card{list_anim.x + 8, (start_y + i * card_h),
-                        list_anim.w - 16, card_h - 4};
-          SDL_Color card_color = (i % 2 == 0) ? theme.bg_secondary : theme.panel;
+          SDL_Rect card = card_base;
+          bool selected = (idx == launcher_index);
+          bool focused = selected && launcher_focus == LauncherFocus::Shelf;
+          float card_scale = 1.0f;
+          if (selected) {
+            card_scale = focused ? (1.05f + focus_pulse * 0.03f) : 1.03f;
+          } else if (point_in_rect(mouse_x, mouse_y, card_base)) {
+            card_scale = 1.02f;
+          }
+          if (card_scale > 1.001f) {
+            int scaled_w = static_cast<int>(std::round(card_base.w * card_scale));
+            int scaled_h = static_cast<int>(std::round(card_base.h * card_scale));
+            card = SDL_Rect{card_base.x - (scaled_w - card_base.w) / 2,
+                            card_base.y - (scaled_h - card_base.h) / 2,
+                            scaled_w, scaled_h};
+          }
+          SDL_Color card_color = ((idx & 1) == 0) ? theme.bg_secondary : theme.panel;
           fill_rect(renderer, card, with_alpha(card_color, anim));
-          if (idx == launcher_index) {
+          if (selected) {
             fill_rect(renderer, card, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
-                                                static_cast<Uint8>(70 * anim)});
+                                                static_cast<Uint8>((focused ? 90 : 62) * anim)});
             SDL_SetRenderDrawColor(renderer, theme.accent.r, theme.accent.g, theme.accent.b,
                                    static_cast<Uint8>(255 * anim));
             SDL_RenderDrawRect(renderer, &card);
           }
-          SDL_Rect art{card.x + 6, card.y + 6, 24, 24};
-          if (CoverTexture* cover = get_cover_texture(entry.cover_path)) {
+
+          const auto& row_entry = roms[static_cast<std::size_t>(launcher_list[idx])];
+          SDL_Rect art{card.x + 6, card.y + 6, card.w - 12, std::max(30, card.h - 30)};
+          draw_panel_alpha(renderer, art, theme, anim);
+          if (CoverTexture* cover = get_cover_texture(row_entry.cover_path)) {
             SDL_Rect dst = fit_rect(art.w, art.h, cover->width, cover->height, art.x, art.y);
             SDL_RenderCopy(renderer, cover->texture, nullptr, &dst);
           } else {
-            SDL_Color chip = color_from_hash(entry.title);
-            fill_rect(renderer, art, chip);
+            SDL_Color chip = color_from_hash(row_entry.title);
+            fill_rect(renderer, art, with_alpha(chip, anim));
           }
-          std::string line = upper_ascii(entry.title);
-          draw_text(renderer, card.x + 36, card.y + 6, 2, line, text);
-          std::string meta = system_short(entry.system) + "  " + format_bytes(entry.size);
-          draw_text(renderer, card.x + 36, card.y + 18, 2, meta, text);
-          int badge_right = card.x + card.w - 6;
-          if (favorite_paths.count(entry.path)) {
-            std::string fav = "FAV";
-            int fav_w = text_width(fav, 2);
-            draw_text(renderer, badge_right - fav_w, card.y + 6, 2, fav, accent);
-            badge_right -= fav_w + 6;
+          std::string name = trim_text_to_width(upper_ascii(row_entry.title), card.w - 10, card_title_scale);
+          draw_text(renderer, card.x + 4, card.y + card.h - (7 * card_title_scale + 2),
+                    card_title_scale, name, text);
+          int badge_right = card.x + card.w - 4;
+          if (favorite_paths.count(row_entry.path)) {
+            std::string fav = "F";
+            int fav_w = text_width(fav, card_title_scale);
+            draw_text(renderer, badge_right - fav_w, card.y + 2, card_title_scale, fav, accent);
+            badge_right -= fav_w + 4;
           }
-          if (rom_override_exists(entry.path)) {
-            std::string ovr = "OVR";
-            int ovr_w = text_width(ovr, 2);
-            draw_text(renderer, badge_right - ovr_w, card.y + 6, 2, ovr, accent);
-          }
-        }
-      }
-
-      if (!launcher_list.empty()) {
-        int rom_index = launcher_list[launcher_index];
-        const auto& entry = roms[rom_index];
-        std::string title = upper_ascii(entry.title);
-        draw_text(renderer, detail_anim.x + 10, detail_anim.y + 10, 2, title, text);
-        std::string info = "SYSTEM: " + system_short(entry.system);
-        draw_text(renderer, detail_anim.x + 10, detail_anim.y + 28, 2, info, text);
-        std::string size = "SIZE: " + format_bytes(entry.size);
-        draw_text(renderer, detail_anim.x + 10, detail_anim.y + 44, 2, size, text);
-        std::string path = upper_ascii(std::filesystem::path(entry.path).filename().string());
-        draw_text(renderer, detail_anim.x + 10, detail_anim.y + 62, 2, path, text);
-
-        int badge_y = detail_anim.y + 78;
-        if (favorite_paths.count(entry.path)) {
-          draw_text(renderer, detail_anim.x + 10, badge_y, 2, "FAVORITE", accent);
-          badge_y += 14;
-        }
-        if (rom_override_exists(entry.path)) {
-          draw_text(renderer, detail_anim.x + 10, badge_y, 2, "OVERRIDE", accent);
-        }
-
-        int art_y = detail_anim.y + 96;
-        int art_bottom = detail_anim.y + (layout.override_button.y - detail_panel.y) - 12;
-        int art_h = art_bottom - art_y;
-        if (art_h > 30) {
-          SDL_Rect art_box{detail_anim.x + 10, art_y, detail_anim.w - 20, art_h};
-          draw_panel_alpha(renderer, art_box, theme, anim);
-          if (CoverTexture* cover = get_cover_texture(entry.cover_path)) {
-            SDL_Rect dst = fit_rect(art_box.w, art_box.h, cover->width, cover->height,
-                                    art_box.x, art_box.y);
-            SDL_RenderCopy(renderer, cover->texture, nullptr, &dst);
-          } else {
-            SDL_Color chip = color_from_hash(entry.title);
-            SDL_Rect chip_rect{art_box.x + 8, art_box.y + 8, 28, 28};
-            fill_rect(renderer, chip_rect, chip);
-            draw_text(renderer, art_box.x + 44, art_box.y + 14, 2, "NO COVER", text);
+          if (rom_override_exists(row_entry.path)) {
+            std::string ovr = "O";
+            int ovr_w = text_width(ovr, card_title_scale);
+            draw_text(renderer, badge_right - ovr_w, card.y + 2, card_title_scale, ovr, accent);
           }
         }
 
-        SDL_Rect override_button = layout.override_button;
+        if (launcher_scroll_anim > 0.15f) {
+          draw_text(renderer, layout.shelf_panel.x + 4, layout.shelf_panel.y + layout.shelf_panel.h / 2 - 5,
+                    2, "<", accent);
+        }
+        float right_remaining = static_cast<float>(launcher_list.size()) - launcher_scroll_anim -
+                                static_cast<float>(visible);
+        if (right_remaining > 0.15f) {
+          draw_text(renderer, layout.shelf_panel.x + layout.shelf_panel.w - 12,
+                    layout.shelf_panel.y + layout.shelf_panel.h / 2 - 5, 2, ">", accent);
+        }
+
         SDL_Rect play_button = layout.play_button;
         SDL_Rect favorite_button = layout.favorite_button;
-        draw_panel_alpha(renderer, override_button, theme, anim);
-        draw_panel_alpha(renderer, play_button, theme, anim);
-        draw_panel_alpha(renderer, favorite_button, theme, anim);
-        if (point_in_rect(mouse_x, mouse_y, override_button)) {
-          fill_rect(renderer, override_button,
-                    SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
-                              static_cast<Uint8>(60 * anim)});
+        SDL_Rect override_button = layout.override_button;
+        auto action_draw_rect = [&](const SDL_Rect& rect, bool focused) {
+          if (!focused) {
+            return rect;
+          }
+          int grow = 1 + static_cast<int>(std::round(focus_pulse * 2.0f));
+          return inflate_rect(rect, grow);
+        };
+        bool play_focused =
+            launcher_focus == LauncherFocus::Play || point_in_rect(mouse_x, mouse_y, play_button);
+        bool favorite_focused = launcher_focus == LauncherFocus::Favorite ||
+                                point_in_rect(mouse_x, mouse_y, favorite_button);
+        bool override_focused = launcher_focus == LauncherFocus::Override ||
+                                point_in_rect(mouse_x, mouse_y, override_button);
+        SDL_Rect play_draw = action_draw_rect(play_button, play_focused);
+        SDL_Rect favorite_draw = action_draw_rect(favorite_button, favorite_focused);
+        SDL_Rect override_draw = action_draw_rect(override_button, override_focused);
+        draw_panel_alpha(renderer, play_draw, theme, anim);
+        draw_panel_alpha(renderer, favorite_draw, theme, anim);
+        draw_panel_alpha(renderer, override_draw, theme, anim);
+        highlight_focus(play_draw, play_focused, 70, 1);
+        highlight_focus(favorite_draw, favorite_focused, 65, 1);
+        highlight_focus(override_draw, override_focused, 65, 1);
+        draw_text(renderer, play_draw.x + 8, play_draw.y + (tv_density ? 10 : 8), body_scale,
+                  "A PLAY", text);
+        std::string fav_label = favorite_paths.count(entry.path) ? "UNFAVORITE" : "FAVORITE";
+        draw_text(renderer, favorite_draw.x + 8, favorite_draw.y + (tv_density ? 10 : 8),
+                  body_scale, "Y " + fav_label, text);
+        std::string override_label = rom_override_exists(entry.path) ? "OVERRIDE ON" : "OVERRIDE OFF";
+        draw_text(renderer, override_draw.x + 8, override_draw.y + (tv_density ? 10 : 8),
+                  body_scale, "RB " + override_label, text);
+
+        struct ControlChip {
+          const char* glyph;
+          const char* label;
+        };
+        const ControlChip chips[] = {
+            {"A", "SELECT"},
+            {"B", "BACK"},
+            {"X", "TAB+"},
+            {"Y", "FAVORITE"},
+            {"LB/RB", "TAB-/+"},
+            {"L3/R3", "THEME"},
+            {"/", "SEARCH"},
+            {"BACK", "SETTINGS"},
+        };
+        int chip_x = layout.action_bar.x + 8;
+        int chip_line_h = 7 * chip_scale + 6;
+        int chip_y = layout.action_bar.y + layout.action_bar.h - chip_line_h + 1;
+        for (const auto& chip : chips) {
+          std::string glyph = upper_ascii(chip.glyph);
+          std::string label = upper_ascii(chip.label);
+          int glyph_w = text_width(glyph, chip_scale);
+          SDL_Rect chip_box{chip_x, chip_y - 1, glyph_w + (chip_scale == 1 ? 6 : 8), chip_line_h};
+          if (chip_box.x + chip_box.w > layout.action_bar.x + layout.action_bar.w - 12) {
+            break;
+          }
+          fill_rect(renderer, chip_box, SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
+                                                  static_cast<Uint8>(90 * anim)});
+          SDL_SetRenderDrawColor(renderer, theme.panel_border.r, theme.panel_border.g,
+                                 theme.panel_border.b, static_cast<Uint8>(220 * anim));
+          SDL_RenderDrawRect(renderer, &chip_box);
+          draw_text(renderer, chip_box.x + 3, chip_box.y + 3, chip_scale, glyph, theme.bg_primary);
+          int label_x = chip_box.x + chip_box.w + 3;
+          int label_w = text_width(label, chip_scale);
+          if (label_x + label_w > layout.action_bar.x + layout.action_bar.w - 8) {
+            break;
+          }
+          draw_text(renderer, label_x, chip_y + 3, chip_scale, label, text);
+          chip_x = label_x + label_w + 8;
         }
-        if (point_in_rect(mouse_x, mouse_y, play_button)) {
-          fill_rect(renderer, play_button,
-                    SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
-                              static_cast<Uint8>(70 * anim)});
-        }
-        if (point_in_rect(mouse_x, mouse_y, favorite_button)) {
-          fill_rect(renderer, favorite_button,
-                    SDL_Color{theme.accent.r, theme.accent.g, theme.accent.b,
-                              static_cast<Uint8>(70 * anim)});
-        }
-        std::string override_label = rom_override_exists(entry.path)
-                                         ? "PER-ROM: ON"
-                                         : "PER-ROM: OFF";
-        draw_text(renderer, override_button.x + 8, override_button.y + 6, 2,
-                  override_label, text);
-        draw_text(renderer, play_button.x + 8, play_button.y + 6, 2, "PLAY", text);
-        std::string fav_label = favorite_paths.count(entry.path) ? "UNFAV" : "FAVORITE";
-        draw_text(renderer, favorite_button.x + 8, favorite_button.y + 6, 2, fav_label, text);
       }
 
-      std::string actions = "ENTER/A START  / SEARCH  TAB/X FILTER  F/Y FAVORITE  O OVERRIDE  R RESCAN  ESC/B BACK/QUIT";
-      draw_text(renderer, detail_anim.x + 10, detail_anim.y + detail_anim.h - 22, 2,
-                actions, text);
-
       if (!launcher_error.empty()) {
-        SDL_Rect err_panel{detail_panel.x + 10, detail_panel.y + detail_panel.h - 50,
-                           detail_panel.w - 20, 20};
+        SDL_Rect err_panel{layout.hero_panel.x + 10, layout.hero_panel.y + layout.hero_panel.h - 28,
+                           layout.hero_panel.w - 20, 18};
         fill_rect(renderer, err_panel, SDL_Color{120, 20, 20, 180});
-        draw_text(renderer, err_panel.x + 4, err_panel.y + 4, 2, "FAILED TO LOAD", theme.text);
+        draw_text(renderer, err_panel.x + 4, err_panel.y + 4, 2, "FAILED TO LOAD SELECTED ROM", theme.text);
       }
     } else if (theme_toast_frames > 0) {
       SDL_Rect toast{10, window_h - 36, 220, 26};
@@ -6002,7 +6743,7 @@ int main(int argc, char** argv) {
   }
   emu_thread_started = false;
 
-  save_ui_state(ui_state_path.string(), ui_theme, scale, target_fps,
+  save_ui_state(ui_state_path.string(), ui_theme, launcher_density, scale, target_fps,
                 input_config.axis_deadzone(), show_help, audio_enabled,
                 show_hud, hud_corner, hud_compact, hud_timeout_seconds,
                 video_filter);

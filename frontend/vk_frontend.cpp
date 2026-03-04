@@ -31,10 +31,14 @@ namespace {
 struct Options {
   enum class FilterMode {
     None,
+    Scanlines,
+    Lcd,
     Crt,
   };
 
   std::string rom_path;
+  bool launcher = false;
+  std::vector<std::string> rom_dirs;
   std::string config_path = "gbemu.conf";
   std::optional<gbemu::core::System> system_override;
   std::optional<double> fps_override;
@@ -73,12 +77,22 @@ struct Options {
   FilterMode filter = FilterMode::None;
 };
 
+struct LauncherRomEntry {
+  std::string path;
+  std::string title;
+  gbemu::core::System system = gbemu::core::System::GB;
+  std::uintmax_t size_bytes = 0;
+};
+
 std::optional<Options::FilterMode> parse_filter(const std::string& value) {
   if (value == "none") {
     return Options::FilterMode::None;
   }
-  if (value == "scanlines" || value == "lcd") {
-    return Options::FilterMode::None;
+  if (value == "scanlines") {
+    return Options::FilterMode::Scanlines;
+  }
+  if (value == "lcd") {
+    return Options::FilterMode::Lcd;
   }
   if (value == "crt") {
     return Options::FilterMode::Crt;
@@ -89,6 +103,8 @@ std::optional<Options::FilterMode> parse_filter(const std::string& value) {
 const char* filter_name(Options::FilterMode mode) {
   switch (mode) {
     case Options::FilterMode::None: return "NONE";
+    case Options::FilterMode::Scanlines: return "SCANLINES";
+    case Options::FilterMode::Lcd: return "LCD";
     case Options::FilterMode::Crt: return "CRT";
   }
   return "NONE";
@@ -185,6 +201,137 @@ gbemu::core::System detect_system(const std::vector<std::uint8_t>& data) {
   return gbemu::core::System::GB;
 }
 
+bool is_supported_rom_path(const std::filesystem::path& path) {
+  std::string ext = path.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return ext == ".gb" || ext == ".gbc" || ext == ".gba";
+}
+
+std::string sanitize_ascii_title(const std::vector<std::uint8_t>& data, std::size_t start,
+                                 std::size_t length) {
+  std::string out;
+  if (start >= data.size()) {
+    return out;
+  }
+  std::size_t end = std::min(data.size(), start + length);
+  out.reserve(length);
+  for (std::size_t i = start; i < end; ++i) {
+    unsigned char c = data[i];
+    if (c == 0) {
+      break;
+    }
+    if (c >= 32 && c <= 126) {
+      out.push_back(static_cast<char>(c));
+    }
+  }
+  while (!out.empty() && out.back() == ' ') {
+    out.pop_back();
+  }
+  return out;
+}
+
+std::string rom_title_from_data(const std::vector<std::uint8_t>& data, gbemu::core::System system) {
+  if (system == gbemu::core::System::GBA) {
+    return sanitize_ascii_title(data, 0xA0, 12);
+  }
+  return sanitize_ascii_title(data, 0x134, 16);
+}
+
+std::string system_short_name(gbemu::core::System system) {
+  switch (system) {
+    case gbemu::core::System::GB: return "GB";
+    case gbemu::core::System::GBC: return "GBC";
+    case gbemu::core::System::GBA: return "GBA";
+  }
+  return "GB";
+}
+
+std::string upper_ascii(std::string text) {
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  return text;
+}
+
+std::string trim_for_ui(std::string_view text, std::size_t max_chars) {
+  if (text.size() <= max_chars) {
+    return std::string(text);
+  }
+  if (max_chars <= 3) {
+    return std::string(text.substr(0, max_chars));
+  }
+  std::string out(text.substr(0, max_chars - 3));
+  out += "...";
+  return out;
+}
+
+std::vector<LauncherRomEntry> scan_launcher_roms(const std::vector<std::string>& rom_dirs) {
+  std::vector<std::filesystem::path> roots;
+  if (!rom_dirs.empty()) {
+    for (const auto& dir : rom_dirs) {
+      roots.emplace_back(dir);
+    }
+  } else {
+    if (std::filesystem::exists("Test-Games")) {
+      roots.emplace_back("Test-Games");
+    }
+    if (std::filesystem::exists("roms")) {
+      roots.emplace_back("roms");
+    }
+  }
+
+  std::vector<LauncherRomEntry> out;
+  std::error_code ec;
+  for (const auto& root : roots) {
+    if (!std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) {
+      continue;
+    }
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
+         it.increment(ec)) {
+      if (ec) {
+        ec.clear();
+        continue;
+      }
+      if (!it->is_regular_file(ec)) {
+        continue;
+      }
+      const auto& path = it->path();
+      if (!is_supported_rom_path(path)) {
+        continue;
+      }
+      LauncherRomEntry entry;
+      entry.path = path.string();
+      entry.size_bytes = it->file_size(ec);
+      std::vector<std::uint8_t> data;
+      std::string err;
+      if (gbemu::common::read_file(entry.path, &data, &err)) {
+        entry.system = detect_system(data);
+        entry.title = rom_title_from_data(data, entry.system);
+      }
+      if (entry.title.empty()) {
+        entry.title = path.stem().string();
+      }
+      out.push_back(std::move(entry));
+    }
+  }
+
+  std::sort(out.begin(), out.end(), [](const LauncherRomEntry& a, const LauncherRomEntry& b) {
+    if (a.system != b.system) {
+      return static_cast<int>(a.system) < static_cast<int>(b.system);
+    }
+    if (a.title != b.title) {
+      return a.title < b.title;
+    }
+    return a.path < b.path;
+  });
+  out.erase(std::unique(out.begin(), out.end(),
+                        [](const LauncherRomEntry& a, const LauncherRomEntry& b) {
+                          return a.path == b.path;
+                        }),
+            out.end());
+  return out;
+}
+
 bool load_boot_rom(gbemu::core::System system, std::vector<std::uint8_t>* out, std::string* error) {
   std::vector<std::string> candidates;
   if (system == gbemu::core::System::GBA) {
@@ -232,12 +379,14 @@ void print_usage(const char* exe) {
   std::cout << "Usage: " << exe << " [options] <rom_file>\n";
   std::cout << "Options:\n";
   std::cout << "  --renderer <sdl|vulkan>\n";
+  std::cout << "  --launcher\n";
+  std::cout << "  --rom-dir <path> (repeatable)\n";
   std::cout << "  --config <path>\n";
   std::cout << "  --system <gb|gbc|gba>\n";
   std::cout << "  --video-driver <wayland|x11>\n";
   std::cout << "  --fps <value>\n";
   std::cout << "  --scale <int>\n";
-  std::cout << "  --filter <none|crt>\n";
+  std::cout << "  --filter <none|scanlines|lcd|crt>\n";
   std::cout << "  --filter-workers <0..16>\n";
   std::cout << "  --gba-hle-swi\n";
   std::cout << "  --gba-fastboot\n";
@@ -475,7 +624,267 @@ void draw_menu_overlay(std::uint32_t* pixels, int width, int height, int menu_in
   }
 
   draw_text(pixels, width, height, panel_x + 10, panel_y + panel_h - 11, 1,
-            "F10/ESC CLOSE  ENTER SELECT", 0xFFB0B0B0u);
+            "F10/GUIDE CLOSE  A/ENTER SELECT", 0xFFB0B0B0u);
+}
+
+void draw_help_overlay(std::uint32_t* pixels, int width, int height) {
+  if (!pixels || width <= 0 || height <= 0) {
+    return;
+  }
+  int panel_w = std::min(width - 24, 380);
+  int panel_h = 78;
+  int panel_x = (width - panel_w) / 2;
+  int panel_y = 10;
+  fill_rect(pixels, width, height, panel_x, panel_y, panel_w, panel_h, 0xD0202020u);
+  fill_rect(pixels, width, height, panel_x, panel_y, panel_w, 2, 0xFF5AE3FFu);
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 8, 1, "VULKAN CONTROLS", 0xFFFFFFFFu);
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 24, 1,
+            "F10/GUIDE MENU   F3 HELP   F4 HUD", 0xFFD4DEE9u);
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 38, 1,
+            "F5 SAVE   F9 LOAD   ESC QUIT", 0xFFD4DEE9u);
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 52, 1,
+            "MENU: DPAD/ARROWS NAV   A/ENTER SELECT", 0xFFB8C5D6u);
+}
+
+void draw_runtime_hud_overlay(std::uint32_t* pixels, int width, int height, gbemu::core::System system,
+                              double fps, bool audio_enabled, Options::FilterMode filter_mode,
+                              bool has_controller) {
+  if (!pixels || width <= 0 || height <= 0) {
+    return;
+  }
+
+  int panel_w = std::min(width - 20, 245);
+  int panel_h = 52;
+  int panel_x = 10;
+  int panel_y = 10;
+  fill_rect(pixels, width, height, panel_x, panel_y, panel_w, panel_h, 0xC0202020u);
+  fill_rect(pixels, width, height, panel_x, panel_y, panel_w, 2, 0xFF5AE3FFu);
+
+  char line1[96];
+  const char* system_name = "GB";
+  if (system == gbemu::core::System::GBC) {
+    system_name = "GBC";
+  } else if (system == gbemu::core::System::GBA) {
+    system_name = "GBA";
+  }
+  std::snprintf(line1, sizeof(line1), "SYS %s   FPS %.1f", system_name, fps);
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 10, 1, line1, 0xFFFFFFFFu);
+
+  std::string line2 = std::string("AUDIO ") + (audio_enabled ? "ON" : "OFF") + "   FILTER " +
+                      filter_name(filter_mode);
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 24, 1, line2, 0xFFD4DEE9u);
+
+  std::string line3 = std::string("INPUT ") + (has_controller ? "PAD+KEY" : "KEYBOARD");
+  draw_text(pixels, width, height, panel_x + 8, panel_y + 38, 1, line3, 0xFFB8C5D6u);
+}
+
+std::optional<std::string> run_vulkan_launcher(const Options& options) {
+  const std::vector<LauncherRomEntry> roms = scan_launcher_roms(options.rom_dirs);
+  if (roms.empty()) {
+    std::cout << "No ROMs found for Vulkan launcher. Use --rom-dir <path>.\n";
+    return std::nullopt;
+  }
+
+  if (!init_sdl_with_wayland_fallback(options.video_driver)) {
+    return std::nullopt;
+  }
+  const char* driver = SDL_GetCurrentVideoDriver();
+  std::cout << "SDL video driver: " << (driver ? driver : "unknown") << "\n";
+
+  constexpr int kFbWidth = 640;
+  constexpr int kFbHeight = 360;
+  SDL_Window* window = SDL_CreateWindow("GBEmu Vulkan Launcher", SDL_WINDOWPOS_CENTERED,
+                                        SDL_WINDOWPOS_CENTERED, 1280, 720,
+                                        SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE |
+                                            SDL_WINDOW_SHOWN);
+  if (!window) {
+    std::cout << "Failed to create Vulkan launcher window: " << SDL_GetError() << "\n";
+    SDL_Quit();
+    return std::nullopt;
+  }
+
+  VulkanRenderer renderer;
+  std::string error;
+  if (!renderer.init(window, kFbWidth, kFbHeight, &error)) {
+    std::cout << "Failed to initialize Vulkan renderer for launcher: " << error << "\n";
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return std::nullopt;
+  }
+
+  std::unordered_map<int, SDL_GameController*> controllers;
+  int joy_count = SDL_NumJoysticks();
+  for (int i = 0; i < joy_count; ++i) {
+    if (!SDL_IsGameController(i)) {
+      continue;
+    }
+    SDL_GameController* controller = SDL_GameControllerOpen(i);
+    if (!controller) {
+      continue;
+    }
+    SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+    if (!joystick) {
+      SDL_GameControllerClose(controller);
+      continue;
+    }
+    controllers[SDL_JoystickInstanceID(joystick)] = controller;
+  }
+
+  std::vector<std::uint32_t> frame(static_cast<std::size_t>(kFbWidth) * kFbHeight, 0xFF0A0D12u);
+  bool running = true;
+  bool confirmed = false;
+  int selected = 0;
+  int scroll = 0;
+  const int visible_rows = 12;
+
+  auto clamp_selection = [&]() {
+    if (roms.empty()) {
+      selected = 0;
+      scroll = 0;
+      return;
+    }
+    selected = std::clamp(selected, 0, static_cast<int>(roms.size()) - 1);
+    if (selected < scroll) {
+      scroll = selected;
+    } else if (selected >= scroll + visible_rows) {
+      scroll = selected - visible_rows + 1;
+    }
+    int max_scroll = std::max(0, static_cast<int>(roms.size()) - visible_rows);
+    scroll = std::clamp(scroll, 0, max_scroll);
+  };
+
+  auto draw_launcher = [&]() {
+    std::fill(frame.begin(), frame.end(), 0xFF0A0D12u);
+    fill_rect(frame.data(), kFbWidth, kFbHeight, 0, 0, kFbWidth, 32, 0xFF132033u);
+    draw_text(frame.data(), kFbWidth, kFbHeight, 12, 10, 2, "GBEMU VULKAN LAUNCHER", 0xFFFFFFFFu);
+    draw_text(frame.data(), kFbWidth, kFbHeight, 12, 38, 1,
+              "DPAD/ARROWS MOVE  A/ENTER START  B/ESC EXIT", 0xFFC4D3E8u);
+
+    const int panel_x = 12;
+    const int panel_y = 56;
+    const int panel_w = kFbWidth - 24;
+    const int panel_h = kFbHeight - 68;
+    fill_rect(frame.data(), kFbWidth, kFbHeight, panel_x, panel_y, panel_w, panel_h, 0xE01A2230u);
+    fill_rect(frame.data(), kFbWidth, kFbHeight, panel_x, panel_y, panel_w, 2, 0xFF5AE3FFu);
+
+    int row_y = panel_y + 12;
+    for (int i = 0; i < visible_rows; ++i) {
+      int idx = scroll + i;
+      if (idx >= static_cast<int>(roms.size())) {
+        break;
+      }
+      bool is_selected = (idx == selected);
+      int row_h = 22;
+      int y = row_y + i * row_h;
+      if (is_selected) {
+        fill_rect(frame.data(), kFbWidth, kFbHeight, panel_x + 8, y - 1, panel_w - 16, row_h - 2,
+                  0xB03E5865u);
+      }
+      const auto& rom = roms[static_cast<std::size_t>(idx)];
+      std::string system = system_short_name(rom.system);
+      std::string title = trim_for_ui(upper_ascii(rom.title), 34);
+      std::string path = trim_for_ui(upper_ascii(rom.path), 56);
+      std::uint32_t color = is_selected ? 0xFFBFEFFFu : 0xFFD8E1EEu;
+      draw_text(frame.data(), kFbWidth, kFbHeight, panel_x + 12, y + 2, 1, system, color);
+      draw_text(frame.data(), kFbWidth, kFbHeight, panel_x + 52, y + 2, 1, title, color);
+      draw_text(frame.data(), kFbWidth, kFbHeight, panel_x + 300, y + 2, 1, path, 0xFF8EA3BCu);
+    }
+    std::string count = "ROMS: " + std::to_string(roms.size());
+    draw_text(frame.data(), kFbWidth, kFbHeight, panel_x + panel_w - 100, panel_y + panel_h - 14, 1,
+              count, 0xFF8EA3BCu);
+  };
+
+  std::cout << "Window created (Vulkan launcher).\n";
+  while (running) {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+      if (ev.type == SDL_QUIT) {
+        running = false;
+      } else if (ev.type == SDL_WINDOWEVENT &&
+                 ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+        renderer.notify_resize();
+      } else if (ev.type == SDL_CONTROLLERDEVICEADDED) {
+        int index = ev.cdevice.which;
+        if (index >= 0 && SDL_IsGameController(index)) {
+          SDL_GameController* controller = SDL_GameControllerOpen(index);
+          if (controller) {
+            SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+            if (joystick) {
+              controllers[SDL_JoystickInstanceID(joystick)] = controller;
+            } else {
+              SDL_GameControllerClose(controller);
+            }
+          }
+        }
+      } else if (ev.type == SDL_CONTROLLERDEVICEREMOVED) {
+        int instance = ev.cdevice.which;
+        auto it = controllers.find(instance);
+        if (it != controllers.end()) {
+          SDL_GameControllerClose(it->second);
+          controllers.erase(it);
+        }
+      } else if (ev.type == SDL_KEYDOWN) {
+        SDL_Keycode key = ev.key.keysym.sym;
+        if (key == SDLK_ESCAPE) {
+          running = false;
+        } else if (key == SDLK_UP) {
+          --selected;
+          clamp_selection();
+        } else if (key == SDLK_DOWN) {
+          ++selected;
+          clamp_selection();
+        } else if (key == SDLK_PAGEUP) {
+          selected -= visible_rows;
+          clamp_selection();
+        } else if (key == SDLK_PAGEDOWN) {
+          selected += visible_rows;
+          clamp_selection();
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) {
+          confirmed = true;
+          running = false;
+        }
+      } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
+        if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+          --selected;
+          clamp_selection();
+        } else if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+          ++selected;
+          clamp_selection();
+        } else if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_A ||
+                   ev.cbutton.button == SDL_CONTROLLER_BUTTON_START) {
+          confirmed = true;
+          running = false;
+        } else if (ev.cbutton.button == SDL_CONTROLLER_BUTTON_B ||
+                   ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) {
+          running = false;
+        }
+      }
+    }
+
+    draw_launcher();
+    if (!renderer.draw_frame(frame.data(), kFbWidth, kFbHeight, &error)) {
+      std::cout << "Vulkan launcher render error: " << error << "\n";
+      confirmed = false;
+      break;
+    }
+    SDL_Delay(16);
+  }
+
+  std::optional<std::string> chosen;
+  if (confirmed && selected >= 0 && selected < static_cast<int>(roms.size())) {
+    chosen = roms[static_cast<std::size_t>(selected)].path;
+  }
+
+  for (auto& it : controllers) {
+    if (it.second) {
+      SDL_GameControllerClose(it.second);
+    }
+  }
+  controllers.clear();
+  renderer.shutdown();
+  SDL_DestroyWindow(window);
+  SDL_Quit();
+  return chosen;
 }
 
 class FilterWorkerPool {
@@ -622,6 +1031,93 @@ void apply_passthrough_filter(const std::uint32_t* src, int src_stride_words, st
   });
 }
 
+void apply_scanlines_filter(const std::uint32_t* src, int src_stride_words, std::uint32_t* dst,
+                            int width, int height, FilterWorkerPool* pool) {
+  if (!src || !dst || width <= 0 || height <= 0) {
+    return;
+  }
+  auto run_rows = [&](auto&& fn) {
+    if (pool && pool->worker_count() > 0) {
+      pool->run(height, fn);
+    } else {
+      fn(0, height);
+    }
+  };
+  run_rows([&](int y_start, int y_end) {
+    for (int y = y_start; y < y_end; ++y) {
+      bool dim_line = (y & 1) != 0;
+      int src_row = y * src_stride_words;
+      int dst_row = y * width;
+      for (int x = 0; x < width; ++x) {
+        std::uint32_t pixel = src[src_row + x];
+        if (dim_line) {
+          int r = static_cast<int>((pixel >> 16) & 0xFFu);
+          int g = static_cast<int>((pixel >> 8) & 0xFFu);
+          int b = static_cast<int>(pixel & 0xFFu);
+          r = (r * 176) >> 8;
+          g = (g * 176) >> 8;
+          b = (b * 176) >> 8;
+          pixel = 0xFF000000u | (static_cast<std::uint32_t>(r) << 16) |
+                  (static_cast<std::uint32_t>(g) << 8) | static_cast<std::uint32_t>(b);
+        }
+        dst[dst_row + x] = pixel;
+      }
+    }
+  });
+}
+
+void apply_lcd_filter(const std::uint32_t* src, int src_stride_words, std::uint32_t* dst, int width,
+                      int height, FilterWorkerPool* pool) {
+  if (!src || !dst || width <= 0 || height <= 0) {
+    return;
+  }
+  auto run_rows = [&](auto&& fn) {
+    if (pool && pool->worker_count() > 0) {
+      pool->run(height, fn);
+    } else {
+      fn(0, height);
+    }
+  };
+  run_rows([&](int y_start, int y_end) {
+    for (int y = y_start; y < y_end; ++y) {
+      bool dim_line = (y & 1) != 0;
+      int src_row = y * src_stride_words;
+      int dst_row = y * width;
+      for (int x = 0; x < width; ++x) {
+        std::uint32_t pixel = src[src_row + x];
+        int r = static_cast<int>((pixel >> 16) & 0xFFu);
+        int g = static_cast<int>((pixel >> 8) & 0xFFu);
+        int b = static_cast<int>(pixel & 0xFFu);
+        switch (x % 3) {
+          case 0:
+            r = std::min(255, (r * 270) >> 8);
+            g = (g * 196) >> 8;
+            b = (b * 196) >> 8;
+            break;
+          case 1:
+            r = (r * 196) >> 8;
+            g = std::min(255, (g * 270) >> 8);
+            b = (b * 196) >> 8;
+            break;
+          default:
+            r = (r * 196) >> 8;
+            g = (g * 196) >> 8;
+            b = std::min(255, (b * 270) >> 8);
+            break;
+        }
+        if (dim_line) {
+          r = (r * 214) >> 8;
+          g = (g * 214) >> 8;
+          b = (b * 214) >> 8;
+        }
+        dst[dst_row + x] = 0xFF000000u | (static_cast<std::uint32_t>(r) << 16) |
+                           (static_cast<std::uint32_t>(g) << 8) |
+                           static_cast<std::uint32_t>(b);
+      }
+    }
+  });
+}
+
 void apply_crt_filter(const std::uint32_t* src, int src_stride_words, std::uint32_t* dst,
                       std::uint32_t* prev, int width, int height, bool reset,
                       FilterWorkerPool* pool) {
@@ -705,6 +1201,14 @@ int run_vulkan_frontend(int argc, char** argv) {
     std::string arg = argv[i];
     if (arg == "-h" || arg == "--help") {
       show_help = true;
+    } else if (arg == "--launcher") {
+      options.launcher = true;
+    } else if (arg == "--rom-dir") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --rom-dir\n";
+        return 1;
+      }
+      options.rom_dirs.emplace_back(argv[++i]);
     } else if (arg == "--config") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --config\n";
@@ -750,6 +1254,12 @@ int run_vulkan_frontend(int argc, char** argv) {
         return 1;
       }
       options.scale = std::max(1, std::stoi(argv[++i]));
+    } else if (arg == "--ui-theme") {
+      if (i + 1 >= argc) {
+        std::cout << "Missing value for --ui-theme\n";
+        return 1;
+      }
+      ++i;
     } else if (arg == "--filter") {
       if (i + 1 >= argc) {
         std::cout << "Missing value for --filter\n";
@@ -907,9 +1417,18 @@ int run_vulkan_frontend(int argc, char** argv) {
     }
   }
 
-  if (show_help || options.rom_path.empty()) {
+  if (show_help || (!options.launcher && options.rom_path.empty())) {
     print_usage(argv[0]);
     return show_help ? 0 : 1;
+  }
+
+  if (options.launcher && options.rom_path.empty()) {
+    auto selected = run_vulkan_launcher(options);
+    if (!selected.has_value()) {
+      return 0;
+    }
+    options.rom_path = *selected;
+    std::cout << "Launcher selected ROM: " << options.rom_path << "\n";
   }
 
   gbemu::core::EmulatorCore core;
@@ -1119,13 +1638,12 @@ int run_vulkan_frontend(int argc, char** argv) {
   unsigned filter_workers =
       options.filter_workers.has_value()
           ? sanitize_filter_workers(*options.filter_workers)
-          : (options.filter == Options::FilterMode::Crt ? default_filter_workers() : 0);
+          : (options.filter == Options::FilterMode::None ? 0 : default_filter_workers());
   FilterWorkerPool filter_pool(filter_workers);
   std::vector<std::uint32_t> filtered_frame;
   std::vector<std::uint32_t> prev_filtered_frame;
   bool filter_reset = true;
-  std::cout << "Vulkan filter: "
-            << (options.filter == Options::FilterMode::Crt ? "crt" : "none")
+  std::cout << "Vulkan filter: " << filter_name(options.filter)
             << ", workers=" << filter_workers << "\n";
 
   std::thread emu_thread([&]() {
@@ -1208,6 +1726,21 @@ int run_vulkan_frontend(int argc, char** argv) {
                            width, height, filter_reset, &filter_pool);
           filter_reset = false;
           output_data = filtered_frame.data();
+        } else if (filter_mode == Options::FilterMode::Scanlines) {
+          if (filtered_frame.size() != pixel_count) {
+            filtered_frame.resize(pixel_count);
+          }
+          apply_scanlines_filter(snapshot.data(), width, filtered_frame.data(), width, height,
+                                 &filter_pool);
+          output_data = filtered_frame.data();
+          filter_reset = true;
+        } else if (filter_mode == Options::FilterMode::Lcd) {
+          if (filtered_frame.size() != pixel_count) {
+            filtered_frame.resize(pixel_count);
+          }
+          apply_lcd_filter(snapshot.data(), width, filtered_frame.data(), width, height, &filter_pool);
+          output_data = filtered_frame.data();
+          filter_reset = true;
         } else if (filter_workers > 0) {
           if (filtered_frame.size() != pixel_count) {
             filtered_frame.resize(pixel_count);
@@ -1314,10 +1847,13 @@ int run_vulkan_frontend(int argc, char** argv) {
     }
   };
 
-  std::cout << "Window created (Vulkan). Press ESC or close to exit.\n";
+  std::cout << "Window created (Vulkan). Press F10/GUIDE for pause menu.\n";
   std::uint64_t fps_last_tick = SDL_GetPerformanceCounter();
   const std::uint64_t perf_freq = SDL_GetPerformanceFrequency();
   int fps_frames = 0;
+  double fps_display = 0.0;
+  bool show_help_overlay = false;
+  bool show_hud = true;
   enum MenuItem {
     kMenuResume = 0,
     kMenuSaveState = 1,
@@ -1326,7 +1862,9 @@ int run_vulkan_frontend(int argc, char** argv) {
     kMenuWindowOverlay = 4,
     kMenuColorCorrection = 5,
     kMenuAudio = 6,
-    kMenuQuit = 7,
+    kMenuHelpOverlay = 7,
+    kMenuHud = 8,
+    kMenuQuit = 9,
   };
   bool menu_open = false;
   int menu_index = kMenuResume;
@@ -1349,15 +1887,17 @@ int run_vulkan_frontend(int argc, char** argv) {
       joypad_irq.store(false, std::memory_order_relaxed);
       menu_scroll = 0;
     }
+    std::cout << "Pause menu: " << (menu_open ? "OPEN" : "CLOSED") << "\n";
     ui_dirty = true;
   };
 
   auto cycle_filter = [&](int dir) {
+    constexpr int kFilterCount = 4;
     int mode = active_filter_mode.load(std::memory_order_relaxed);
     if (dir > 0) {
-      mode = (mode + 1) % 2;
+      mode = (mode + 1) % kFilterCount;
     } else {
-      mode = (mode + 1) % 2;
+      mode = (mode + kFilterCount - 1) % kFilterCount;
     }
     active_filter_mode.store(mode, std::memory_order_relaxed);
     std::cout << "Vulkan filter: " << filter_name(static_cast<Options::FilterMode>(mode)) << "\n";
@@ -1460,6 +2000,8 @@ int run_vulkan_frontend(int argc, char** argv) {
     } else {
       labels.emplace_back("AUDIO: UNAVAILABLE");
     }
+    labels.emplace_back(std::string("HELP OVERLAY: ") + (show_help_overlay ? "ON" : "OFF"));
+    labels.emplace_back(std::string("HUD: ") + (show_hud ? "ON" : "OFF"));
     labels.emplace_back("QUIT");
     return labels;
   };
@@ -1522,6 +2064,16 @@ int run_vulkan_frontend(int argc, char** argv) {
       case kMenuAudio:
         toggle_audio();
         break;
+      case kMenuHelpOverlay:
+        show_help_overlay = !show_help_overlay;
+        std::cout << "Help overlay: " << (show_help_overlay ? "ON" : "OFF") << "\n";
+        ui_dirty = true;
+        break;
+      case kMenuHud:
+        show_hud = !show_hud;
+        std::cout << "HUD: " << (show_hud ? "ON" : "OFF") << "\n";
+        ui_dirty = true;
+        break;
       case kMenuQuit:
         running.store(false, std::memory_order_relaxed);
         break;
@@ -1530,7 +2082,115 @@ int run_vulkan_frontend(int argc, char** argv) {
     }
   };
 
+  auto apply_menu_side_action = [&](int dir) {
+    if (menu_index == kMenuFilter) {
+      cycle_filter(dir);
+    } else if (menu_index == kMenuColorCorrection && system != gbemu::core::System::GB) {
+      toggle_color_correction();
+    } else if (menu_index == kMenuAudio) {
+      toggle_audio();
+    } else if (menu_index == kMenuHelpOverlay) {
+      show_help_overlay = !show_help_overlay;
+      std::cout << "Help overlay: " << (show_help_overlay ? "ON" : "OFF") << "\n";
+      ui_dirty = true;
+    } else if (menu_index == kMenuHud) {
+      show_hud = !show_hud;
+      std::cout << "HUD: " << (show_hud ? "ON" : "OFF") << "\n";
+      ui_dirty = true;
+    }
+  };
+
+  auto push_key_tap = [&](SDL_Keycode key) {
+    SDL_Event down{};
+    down.type = SDL_KEYDOWN;
+    down.key.state = SDL_PRESSED;
+    down.key.repeat = 0;
+    down.key.keysym.sym = key;
+    SDL_PushEvent(&down);
+
+    SDL_Event up{};
+    up.type = SDL_KEYUP;
+    up.key.state = SDL_RELEASED;
+    up.key.repeat = 0;
+    up.key.keysym.sym = key;
+    SDL_PushEvent(&up);
+  };
+
+  auto push_controller_button_tap = [&](Uint8 button) {
+    SDL_Event down{};
+    down.type = SDL_CONTROLLERBUTTONDOWN;
+    down.cbutton.state = SDL_PRESSED;
+    down.cbutton.which = 0;
+    down.cbutton.button = button;
+    SDL_PushEvent(&down);
+
+    SDL_Event up{};
+    up.type = SDL_CONTROLLERBUTTONUP;
+    up.cbutton.state = SDL_RELEASED;
+    up.cbutton.which = 0;
+    up.cbutton.button = button;
+    SDL_PushEvent(&up);
+  };
+
+  auto push_quit_event = [&]() {
+    SDL_Event quit{};
+    quit.type = SDL_QUIT;
+    SDL_PushEvent(&quit);
+  };
+
+  std::string ui_autotest_mode;
+  if (const char* value = SDL_getenv("GBEMU_VK_UI_AUTOTEST")) {
+    ui_autotest_mode = value;
+    std::transform(ui_autotest_mode.begin(), ui_autotest_mode.end(), ui_autotest_mode.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  }
+  std::vector<std::function<void()>> ui_autotest_steps;
+  if (ui_autotest_mode == "menu-hud") {
+    std::cout << "Vulkan UI autotest: menu-hud\n";
+    ui_autotest_steps = {
+        [&]() { push_key_tap(SDLK_F4); },
+        [&]() { push_key_tap(SDLK_F4); },
+        [&]() { push_key_tap(SDLK_F3); },
+        [&]() { push_key_tap(SDLK_F3); },
+        [&]() { push_key_tap(SDLK_F10); },
+        [&]() { push_key_tap(SDLK_ESCAPE); },
+        [&]() { push_quit_event(); },
+    };
+  } else if (ui_autotest_mode == "controller-menu") {
+    std::cout << "Vulkan UI autotest: controller-menu\n";
+    ui_autotest_steps = {
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_GUIDE); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_RIGHT); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_UP); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_UP); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_DPAD_UP); },
+        [&]() { push_controller_button_tap(SDL_CONTROLLER_BUTTON_A); },
+        [&]() { push_quit_event(); },
+    };
+  }
+  std::size_t ui_autotest_index = 0;
+  std::uint64_t ui_autotest_next_tick = SDL_GetTicks64() + 120;
+
+  auto pump_ui_autotest = [&]() {
+    if (ui_autotest_steps.empty() || ui_autotest_index >= ui_autotest_steps.size()) {
+      return;
+    }
+    std::uint64_t now = SDL_GetTicks64();
+    if (now < ui_autotest_next_tick) {
+      return;
+    }
+    ui_autotest_steps[ui_autotest_index++]();
+    ui_autotest_next_tick = now + 120;
+    if (ui_autotest_index == ui_autotest_steps.size()) {
+      std::cout << "Vulkan UI autotest sequence complete: " << ui_autotest_mode << "\n";
+    }
+  };
+
   while (running.load(std::memory_order_relaxed)) {
+    pump_ui_autotest();
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
       if (ev.type == SDL_QUIT) {
@@ -1568,6 +2228,18 @@ int run_vulkan_frontend(int argc, char** argv) {
           set_menu_open(!menu_open);
           continue;
         }
+        if (key == SDLK_F3) {
+          show_help_overlay = !show_help_overlay;
+          std::cout << "Help overlay: " << (show_help_overlay ? "ON" : "OFF") << "\n";
+          ui_dirty = true;
+          continue;
+        }
+        if (key == SDLK_F4) {
+          show_hud = !show_hud;
+          std::cout << "HUD: " << (show_hud ? "ON" : "OFF") << "\n";
+          ui_dirty = true;
+          continue;
+        }
 
         if (menu_open) {
           if (key == SDLK_ESCAPE) {
@@ -1579,14 +2251,7 @@ int run_vulkan_frontend(int argc, char** argv) {
             move_menu(1);
             keep_menu_selection_visible();
           } else if (key == SDLK_LEFT || key == SDLK_RIGHT) {
-            if (menu_index == kMenuFilter) {
-              cycle_filter(key == SDLK_RIGHT ? 1 : -1);
-            } else if (menu_index == kMenuColorCorrection &&
-                       system != gbemu::core::System::GB) {
-              toggle_color_correction();
-            } else if (menu_index == kMenuAudio) {
-              toggle_audio();
-            }
+            apply_menu_side_action(key == SDLK_RIGHT ? 1 : -1);
           } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) {
             apply_menu_action();
           }
@@ -1613,9 +2278,32 @@ int run_vulkan_frontend(int argc, char** argv) {
         }
         set_key(ev.key.keysym.sym, false);
       } else if (ev.type == SDL_CONTROLLERBUTTONDOWN) {
-        if (!menu_open) {
-          set_controller_button(ev.cbutton.button, true);
+        Uint8 button = ev.cbutton.button;
+        if (button == SDL_CONTROLLER_BUTTON_GUIDE) {
+          set_menu_open(!menu_open);
+          continue;
         }
+        if (menu_open) {
+          if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+            move_menu(-1);
+            keep_menu_selection_visible();
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+            move_menu(1);
+            keep_menu_selection_visible();
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+            apply_menu_side_action(-1);
+          } else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+            apply_menu_side_action(1);
+          } else if (button == SDL_CONTROLLER_BUTTON_A ||
+                     button == SDL_CONTROLLER_BUTTON_START) {
+            apply_menu_action();
+          } else if (button == SDL_CONTROLLER_BUTTON_B ||
+                     button == SDL_CONTROLLER_BUTTON_BACK) {
+            set_menu_open(false);
+          }
+          continue;
+        }
+        set_controller_button(button, true);
       } else if (ev.type == SDL_CONTROLLERBUTTONUP) {
         if (!menu_open) {
           set_controller_button(ev.cbutton.button, false);
@@ -1646,11 +2334,25 @@ int run_vulkan_frontend(int argc, char** argv) {
     if (new_frame || ui_dirty) {
       if (!last_frame.empty()) {
         const std::uint32_t* draw_data = last_frame.data();
-        if (menu_open) {
+        bool needs_overlay = menu_open || show_help_overlay || show_hud;
+        if (needs_overlay) {
           overlay_frame = last_frame;
-          keep_menu_selection_visible();
-          draw_menu_overlay(overlay_frame.data(), fb_width, fb_height, menu_index, menu_scroll,
-                            menu_labels());
+          if (menu_open) {
+            keep_menu_selection_visible();
+            draw_menu_overlay(overlay_frame.data(), fb_width, fb_height, menu_index, menu_scroll,
+                              menu_labels());
+          } else {
+            if (show_hud) {
+              draw_runtime_hud_overlay(
+                  overlay_frame.data(), fb_width, fb_height, system, fps_display,
+                  audio_enabled.load(std::memory_order_relaxed),
+                  static_cast<Options::FilterMode>(active_filter_mode.load(std::memory_order_relaxed)),
+                  !controllers.empty());
+            }
+            if (show_help_overlay) {
+              draw_help_overlay(overlay_frame.data(), fb_width, fb_height);
+            }
+          }
           draw_data = overlay_frame.data();
         }
 
@@ -1673,10 +2375,14 @@ int run_vulkan_frontend(int argc, char** argv) {
     if (now - fps_last_tick >= perf_freq) {
       double seconds = static_cast<double>(now - fps_last_tick) / static_cast<double>(perf_freq);
       double fps = seconds > 0.0 ? static_cast<double>(fps_frames) / seconds : 0.0;
+      fps_display = fps;
       std::snprintf(title_buf, sizeof(title_buf), "GBEmu Vulkan - %.1f FPS", fps);
       SDL_SetWindowTitle(window, title_buf);
       fps_frames = 0;
       fps_last_tick = now;
+      if (show_hud && !menu_open) {
+        ui_dirty = true;
+      }
     }
   }
 

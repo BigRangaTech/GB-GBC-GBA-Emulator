@@ -65,6 +65,7 @@ frontend/CMakeFiles/gbemu.dir/main.cpp.o
  /usr/include/SDL2/SDL_touch.h
  /usr/include/SDL2/SDL_version.h
  /usr/include/SDL2/SDL_video.h
+ /usr/include/SDL2/SDL_vulkan.h
  /usr/include/SDL2/begin_code.h
  /usr/include/SDL2/close_code.h
  /usr/include/alloca.h

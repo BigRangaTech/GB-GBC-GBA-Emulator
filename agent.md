@@ -7,7 +7,7 @@
 - Linux-first workflow with Android path kept in tree.
 - Deterministic emulation loop suitable for regression testing.
 
-## Current Implementation Snapshot (Updated March 3, 2026)
+## Current Implementation Snapshot (Updated March 4, 2026)
 
 ### Core
 
@@ -39,7 +39,14 @@
 ### Frontend
 
 - `frontend/main.cpp` provides SDL2 app + launcher UX and CLI options.
-- Vulkan path is present (`gbemu_vk`) alongside the SDL path.
+- `frontend/vk_frontend.cpp` now also supports launcher mode (`--launcher`) with ROM directory scanning (`--rom-dir`) and controller/keyboard navigation.
+- Launcher UX now supports a TV/controller-first gaming-mode layout with top controls, a library tab row (`All`/`Recents`/`Favorites`/`GB`/`GBC`/`GBA`), hero detail panel, horizontal ROM carousel, focus-driven action rail (`Play` / `Favorite` / `Override`), and controller-glyph action hints.
+- Launcher transitions now include smooth shelf scrolling plus hero/action focus zoom/slide behavior for couch-readable navigation feedback.
+- Launcher rendering now applies a selectable density profile (`Auto`, `TV Compact`, `TV Large`) used by settings and persisted in UI state; `Auto` enables the larger TV profile when window height is 900px or higher.
+- Vulkan path is present (`gbemu_vk`) alongside the SDL path, now with aspect-correct letterboxed integer upscaling and filter parity for `none` / `scanlines` / `lcd` / `crt`.
+- Frontend backend selection now defaults to Vulkan for ROM runtime and launcher, with auto-fallback to SDL software rendering when Vulkan is unavailable.
+- Vulkan runtime now supports pause-menu parity with keyboard/controller controls (`F10`/`Guide` open-close, D-pad/arrow navigation, A/Enter apply, B/Esc close).
+- Vulkan runtime now supports HUD/help overlays (`F4` HUD, `F3` help) and pause-menu toggles for both.
 
 ### State System
 
@@ -81,7 +88,7 @@
 - Shortcut runner: `tests/run_seed_gba_report.sh` (seed + GBA packs + report).
 - Optional baseline ratchet: `GBEMU_CONFORMANCE_TIGHTEN_BASELINE=1 tests/run_seed_gba_report.sh` (or `make conformance-gba-tighten`).
 - Shortcut runner: `tests/run_seed_gba_swi_ab_report.sh` (seed + SWI A/B + CSV diff).
-- Top-level make shortcuts: `make build`, `make test`, `make conformance-smoke`, `make conformance-gba`, `make conformance-gba-tighten`, `make conformance-gba-swi-ab`, `make conformance-all`.
+- Top-level make shortcuts: `make build`, `make test`, `make ui-smoke`, `make conformance-smoke`, `make conformance-gba`, `make conformance-gba-tighten`, `make conformance-gba-swi-ab`, `make conformance-all`.
 - Pack definitions and layout guidance are documented in `tests/conformance_packs.md`.
 
 ## Build/Test Workflow
@@ -124,6 +131,7 @@ ctest --test-dir build --output-on-failure
 - Save-state compatibility checks covering v4/v5 expectations.
 - Conformance selector/token matching, verdict classification, and baseline/report plumbing regression coverage.
 - GBA mGBA debug text capture regression check feeding conformance verdict parsing.
+- UI smoke coverage (`tests/ui_smoke.sh`) now includes Vulkan launcher startup, Vulkan filter matrix, Vulkan runtime HUD/help toggle script, and controller-driven pause-menu navigation script.
 
 ## Immediate Engineering Priorities
 
@@ -137,5 +145,7 @@ ctest --test-dir build --output-on-failure
 For every behavior change, update in the same patch:
 
 - `README.md` for user-facing behavior
+- `CHANGELOG.md` with timestamped change notes and test/build results
+- `currentstatus.md` with the latest capability snapshot and priorities
 - `agent.md` for architecture/status notes
 - corresponding tests under `tests/`

@@ -1,10 +1,10 @@
-Start testing: Mar 03 17:52 AEST
+Start testing: Mar 04 22:57 AEST
 ----------------------------------------------------------
 1/1 Testing: gbemu_tests
 1/1 Test: gbemu_tests
 Command: "/home/jessie/Documents/GB-GBC-GBA-Emulator/build/tests/gbemu_tests"
 Directory: /home/jessie/Documents/GB-GBC-GBA-Emulator/build/tests
-"gbemu_tests" start time: Mar 03 17:52 AEST
+"gbemu_tests" start time: Mar 04 22:57 AEST
 Output:
 ----------------------------------------------------------
 GBA ROM logo patched to match BIOS logo
@@ -31,11 +31,11 @@ Conformance harness skipped. Set GBEMU_RUN_CONFORMANCE=1 to enable.
 Test-Games folder not found. Skipping ROM scan.
 All tests passed.
 <end of output>
-Test time =   0.35 sec
+Test time =   0.33 sec
 ----------------------------------------------------------
 Test Passed.
-"gbemu_tests" end time: Mar 03 17:52 AEST
+"gbemu_tests" end time: Mar 04 22:57 AEST
 "gbemu_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Mar 03 17:52 AEST
+End testing: Mar 04 22:57 AEST
