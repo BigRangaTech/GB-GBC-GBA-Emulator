@@ -445,6 +445,30 @@ std::vector<std::uint8_t> build_gba_timing_rom() {
   return rom;
 }
 
+int run_gba_data_access_probe(std::uint32_t opcode,
+                              std::uint32_t data_addr,
+                              std::uint16_t waitcnt) {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for data-access timing probe");
+  if (!ok) {
+    return 0;
+  }
+
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kProbePc = 0x03000000u; // IWRAM probe to isolate data-side timing.
+  core.debug_write32(kProbePc, opcode);
+  core.debug_set_cpu_reg(1, data_addr);
+  core.debug_set_cpu_reg(15, kProbePc);
+  core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+  core.debug_write16(kRegWaitcnt, waitcnt);
+  return core.debug_step_cpu_instruction();
+}
+
 void test_gba_mgba_debug_output_capture() {
   gbemu::core::GbaBus bus;
   std::vector<std::uint8_t> rom = build_gba_spin_rom();
@@ -701,6 +725,208 @@ void test_gba_waitcnt_write_flushes_prefetch_stream() {
          "WAITCNT writes should flush fetch stream/prefetch so next fetch pays updated wait cost");
 }
 
+void test_gba_prefetch_stream_break_on_dma_activity() {
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kProgPc = 0x08000120u;
+  constexpr std::uint32_t kDma0Base = 0x040000B0u;
+  constexpr std::uint32_t kDmaSrc = 0x02000000u;
+  constexpr std::uint32_t kDmaDst = 0x02000020u;
+
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  write_le32(&rom, 0x120, 0xE1A00000u); // NOP
+  write_le32(&rom, 0x124, 0xE1A00000u); // NOP
+  write_le32(&rom, 0x128, 0xE1A00000u); // NOP
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for DMA prefetch break timing test");
+  if (!ok) {
+    return;
+  }
+
+  core.debug_set_cpu_reg(15, kProgPc);
+  core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+  core.debug_write16(kRegWaitcnt, 0x4030u); // prefetch on, high WS0 first wait
+
+  int first = core.debug_step_cpu_instruction();
+  int steady = core.debug_step_cpu_instruction();
+  expect(first > 0 && steady > 0,
+         "DMA prefetch break timing test should execute warm-up steps");
+
+  core.debug_write32(kDmaSrc, 0x89ABCDEFu);
+  core.debug_write32(kDma0Base + 0u, kDmaSrc);
+  core.debug_write32(kDma0Base + 4u, kDmaDst);
+  core.debug_write16(kDma0Base + 8u, 1u);
+  core.debug_write16(kDma0Base + 10u, 0x8000u); // immediate enable
+  core.debug_step_dma();
+
+  int after_dma = core.debug_step_cpu_instruction();
+  expect(after_dma > steady,
+         "DMA activity should invalidate fetch stream/prefetch so next ROM fetch refills");
+}
+
+void test_gba_prefetch_stream_break_on_irq_service_event() {
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kRegIe = 0x04000200u;
+  constexpr std::uint32_t kRegIme = 0x04000208u;
+  constexpr std::uint32_t kProgPc = 0x08000120u;
+
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  write_le32(&rom, 0x120, 0xE1A00000u); // NOP
+  write_le32(&rom, 0x124, 0xE1A00000u); // NOP
+  write_le32(&rom, 0x128, 0xE1A00000u); // NOP
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for IRQ-event prefetch break timing test");
+  if (!ok) {
+    return;
+  }
+
+  core.debug_set_cpu_reg(15, kProgPc);
+  core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+  core.debug_write16(kRegWaitcnt, 0x4030u); // prefetch on, high WS0 first wait
+
+  int first = core.debug_step_cpu_instruction();
+  int steady = core.debug_step_cpu_instruction();
+  expect(first > 0 && steady > 0,
+         "IRQ-event prefetch break timing test should execute warm-up steps");
+
+  core.debug_write16(kRegIe, 0x0001u);
+  core.debug_set_if_bits(0x0001u);
+  core.debug_write16(kRegIme, 0x0001u);
+  core.debug_service_interrupts();
+
+  // Emulate post-IRQ return boundary by restoring ROM PC for the next fetch probe.
+  core.debug_set_cpu_reg(15, 0x08000128u);
+  core.debug_set_cpu_cpsr(core.debug_cpu_cpsr() & ~(1u << 5)); // ARM state
+  int after_irq = core.debug_step_cpu_instruction();
+  expect(after_irq > steady,
+         "IRQ service should invalidate fetch stream/prefetch so resumed ROM fetch refills");
+}
+
+void test_gba_waitcnt_ws1_ws2_region_timing() {
+  // WAITCNT layout used by the current timing model:
+  // WS0 nseq bits [5:4], WS0 seq [6], WS1 nseq [8:7], WS1 seq [9], WS2 nseq [11:10], WS2 seq [12].
+  constexpr std::uint16_t kWaitcnt = 0x1E60u; // WS0 first=2, WS1 first=4, WS2 first=8, seq bits=1.
+  constexpr std::uint32_t kArmLdrhR0FromR1 = 0xE1D100B0u; // LDRH r0, [r1]
+
+  int ws0 = run_gba_data_access_probe(kArmLdrhR0FromR1, 0x08000100u, kWaitcnt);
+  int ws1 = run_gba_data_access_probe(kArmLdrhR0FromR1, 0x0A000100u, kWaitcnt);
+  int ws2 = run_gba_data_access_probe(kArmLdrhR0FromR1, 0x0C000100u, kWaitcnt);
+
+  expect(ws0 > 0 && ws1 > 0 && ws2 > 0, "WS0/WS1/WS2 timing probe should execute");
+  expect(ws0 < ws1 && ws1 < ws2,
+         "Game Pak timing should scale with WAITCNT WS0/WS1/WS2 region wait selections");
+}
+
+void test_gba_data_access_width_and_sram_wait_timing() {
+  constexpr std::uint32_t kArmLdrbR0FromR1 = 0xE5D10000u; // LDRB r0, [r1]
+  constexpr std::uint32_t kArmLdrhR0FromR1 = 0xE1D100B0u; // LDRH r0, [r1]
+  constexpr std::uint32_t kArmLdrR0FromR1 = 0xE5910000u;  // LDR  r0, [r1]
+
+  // Game Pak width behavior: 32-bit should cost more than 8/16-bit due two halfword transfers.
+  int gp_byte = run_gba_data_access_probe(kArmLdrbR0FromR1, 0x08000100u, 0x0030u);
+  int gp_half = run_gba_data_access_probe(kArmLdrhR0FromR1, 0x08000100u, 0x0030u);
+  int gp_word = run_gba_data_access_probe(kArmLdrR0FromR1, 0x08000100u, 0x0030u);
+  expect(gp_byte > 0 && gp_half > 0 && gp_word > 0,
+         "Game Pak width timing probe should execute");
+  expect(gp_word > gp_half && gp_word > gp_byte,
+         "32-bit Game Pak data access should incur higher wait penalty than 8/16-bit accesses");
+
+  // SRAM wait control + width scaling.
+  int sram_byte_fast = run_gba_data_access_probe(kArmLdrbR0FromR1, 0x0E000100u, 0x0002u);
+  int sram_byte_slow = run_gba_data_access_probe(kArmLdrbR0FromR1, 0x0E000100u, 0x0003u);
+  int sram_half_slow = run_gba_data_access_probe(kArmLdrhR0FromR1, 0x0E000100u, 0x0003u);
+  int sram_word_slow = run_gba_data_access_probe(kArmLdrR0FromR1, 0x0E000100u, 0x0003u);
+  expect(sram_byte_fast > 0 && sram_byte_slow > 0 && sram_half_slow > 0 && sram_word_slow > 0,
+         "SRAM timing probe should execute");
+  expect(sram_byte_slow > sram_byte_fast,
+         "SRAM wait control should increase data-access timing when slower wait index is selected");
+  expect(sram_byte_slow < sram_half_slow && sram_half_slow < sram_word_slow,
+         "SRAM data timing should scale with access width (8-bit < 16-bit < 32-bit)");
+}
+
+void test_gba_gamepak_data_burst_sequential_wait_timing() {
+  gbemu::core::GbaBus bus;
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = bus.load(rom, bios, &error);
+  expect(ok, "GbaBus should load for Game Pak data-burst timing test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kAddr = 0x08000100u;
+  bus.write16(kRegWaitcnt, 0x0030u); // WS0 first=8, second=2, prefetch off
+
+  auto one_read_step_cycles = [&bus](std::uint32_t address) -> int {
+    bus.begin_cpu_step();
+    (void)bus.read16(address);
+    return bus.finish_cpu_step(0);
+  };
+
+  int single = one_read_step_cycles(kAddr);
+  bus.begin_cpu_step();
+  (void)bus.read16(kAddr);
+  (void)bus.read16(kAddr + 2u);
+  int burst = bus.finish_cpu_step(0);
+
+  expect(single > 0 && burst > 0, "Game Pak data-burst timing probe should execute");
+  {
+    std::ostringstream msg;
+    msg << "Back-to-back Game Pak data accesses in one CPU step should use sequential wait after first access"
+        << " (single=" << single << " burst=" << burst << ")";
+    expect(burst < single * 2, msg.str());
+  }
+
+  int separate_first = one_read_step_cycles(kAddr);
+  int separate_second = one_read_step_cycles(kAddr + 2u);
+  expect(separate_second >= separate_first,
+         "Across CPU-step boundaries Game Pak data accesses should restart as non-sequential waits");
+}
+
+void test_gba_gamepak_data_stream_break_on_event_invalidation() {
+  gbemu::core::GbaBus bus;
+  std::vector<std::uint8_t> rom = build_gba_timing_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = bus.load(rom, bios, &error);
+  expect(ok, "GbaBus should load for Game Pak data-stream invalidation test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
+  constexpr std::uint32_t kAddr = 0x08000100u;
+  bus.write16(kRegWaitcnt, 0x0030u); // WS0 first=8, second=2, prefetch off
+
+  bus.begin_cpu_step();
+  (void)bus.read16(kAddr);
+  (void)bus.read16(kAddr + 2u);
+  int burst = bus.finish_cpu_step(0);
+
+  bus.begin_cpu_step();
+  (void)bus.read16(kAddr);
+  bus.invalidate_prefetch_stream(); // models IRQ/DMA/event stream invalidation
+  (void)bus.read16(kAddr + 2u);
+  int invalidated = bus.finish_cpu_step(0);
+
+  expect(burst > 0 && invalidated > 0, "Data-stream invalidation timing probe should execute");
+  {
+    std::ostringstream msg;
+    msg << "Event invalidation should break Game Pak data sequential stream and force non-sequential refill cost"
+        << " (burst=" << burst << " invalidated=" << invalidated << ")";
+    expect(invalidated > burst, msg.str());
+  }
+}
+
 void test_gba_prefetch_pipeline_refill_on_branch_and_mode_switch() {
   constexpr std::uint32_t kRegWaitcnt = 0x04000204u;
 
@@ -849,6 +1075,19 @@ void test_gba_hle_swi_math_and_affine() {
   expect(core.debug_cpu_reg(3) == 5u, "SWI Div should return abs(quotient) in R3");
   expect(core.cpu_pc() == 0x08000004u, "HLE SWI Div should advance ARM PC by 4");
   expect(cycles > 0, "HLE SWI Div should report cycle cost");
+
+  core.debug_set_cpu_reg(0, 21u);
+  core.debug_set_cpu_reg(1, 0xFFFFFFFCu); // -4
+  handled = core.debug_handle_swi_hle(0x08000010u, false, 0xEF060000u, &cycles);
+  expect(handled, "HLE SWI Div should accept ARM high-byte immediate form");
+  expect(static_cast<std::int32_t>(core.debug_cpu_reg(0)) == -5,
+         "ARM high-byte SWI Div should return signed quotient in R0");
+  expect(static_cast<std::int32_t>(core.debug_cpu_reg(1)) == 1,
+         "ARM high-byte SWI Div should return signed remainder in R1");
+  expect(core.debug_cpu_reg(3) == 5u,
+         "ARM high-byte SWI Div should return abs(quotient) in R3");
+  expect(core.cpu_pc() == 0x08000014u,
+         "ARM high-byte SWI Div should advance ARM PC by 4");
 
   core.debug_set_cpu_reg(0, 0xFFFFFFF9u); // -7 (denominator)
   core.debug_set_cpu_reg(1, 40u);         // numerator
@@ -1320,6 +1559,44 @@ void test_gba_irq_register_masking() {
          "IME bit 0 should clear when written as 0");
 }
 
+void test_gba_irq_ime_enable_gates_pending_service() {
+  gbemu::core::GbaCore core;
+  core.set_fastboot(true);
+  std::vector<std::uint8_t> rom = build_gba_spin_rom();
+  std::vector<std::uint8_t> bios(0x4000, 0);
+  std::string error;
+  bool ok = core.load(rom, bios, &error);
+  expect(ok, "GbaCore load should succeed for IME IRQ gating test");
+  if (!ok) {
+    return;
+  }
+
+  constexpr std::uint32_t kRegIe = 0x04000200u;
+  constexpr std::uint32_t kRegIf = 0x04000202u;
+  constexpr std::uint32_t kRegIme = 0x04000208u;
+
+  core.debug_set_cpu_reg(15, 0x08000000u);
+  std::uint32_t cpsr = core.debug_cpu_cpsr();
+  cpsr &= ~(1u << 7); // IRQ enabled in CPSR
+  core.debug_set_cpu_cpsr(cpsr);
+  core.debug_write16(kRegIe, 0x0001u);
+  core.debug_set_if_bits(0x0001u);
+  core.debug_write16(kRegIme, 0x0000u);
+
+  core.debug_service_interrupts();
+  expect(core.cpu_pc() == 0x08000000u,
+         "IME=0 should block IRQ servicing even when IE/IF indicate pending interrupt");
+  expect(core.debug_read16(kRegIf) == 0x0001u,
+         "IME=0 should leave pending IF bit unchanged");
+
+  core.debug_write16(kRegIme, 0x0001u);
+  core.debug_service_interrupts();
+  expect(core.cpu_pc() < 0x08000000u,
+         "Re-enabling IME should allow pending interrupt to enter BIOS IRQ vector");
+  expect(core.debug_read16(kRegIf) == 0x0000u,
+         "IRQ service after IME enable should acknowledge the serviced IF bit");
+}
+
 void test_gba_irq_thumb_origin_lr_pipeline() {
   gbemu::core::GbaCore core;
   core.set_fastboot(true);
@@ -1723,14 +2000,24 @@ std::vector<ConformanceCase> default_conformance_cases() {
       {"blargg-smoke-instr-timing", "smoke", gbemu::core::System::GB, 240, false,
        {"conformance", "smoke", "blargg", "instr-timing"}},
       {"mooneye-smoke", "smoke", gbemu::core::System::GB, 240, false, {"conformance", "smoke", "mooneye"}},
-      {"gba-smoke", "gba-smoke", gbemu::core::System::GBA, 120, true, {"conformance", "smoke", "gba"}},
-      {"gba-cpu-arm", "gba-cpu", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "cpu", "arm"}},
-      {"gba-cpu-thumb", "gba-cpu", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "cpu", "thumb"}},
-      {"gba-dma-timer", "gba-dma-timer", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "dma", "timer"}},
-      {"gba-mem-timing", "gba-mem-timing", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "mem", "timing"}},
-      {"gba-ppu-modes", "gba-ppu", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "ppu"}},
-      {"gba-swi-bios", "gba-swi-bios", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "swi"}},
-      {"gba-swi-compat", "gba-swi-compat", gbemu::core::System::GBA, 180, true, {"conformance", "gba", "swi", "compat"}},
+      {"gba-smoke", "gba-smoke", gbemu::core::System::GBA, 120, true,
+       {"conformance", "smoke", "gba", "mgba"}},
+      {"gba-cpu-arm", "gba-cpu", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "cpu", "arm", "mgba"}},
+      {"gba-cpu-thumb", "gba-cpu", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "cpu", "thumb", "mgba"}},
+      {"gba-dma-timer", "gba-dma-timer", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "dma", "timer", "mgba"}},
+      {"gba-mem-timing", "gba-mem-timing", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "mem", "timing", "mgba"}},
+      {"gba-ppu-modes", "gba-ppu", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "ppu", "mgba"}},
+      {"gba-swi-bios", "gba-swi-bios", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "swi", "bios", "mgba"}},
+      {"gba-swi-compat", "gba-swi-compat", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "swi", "compat", "mgba"}},
+      {"gba-swi-realbios", "gba-swi-realbios", gbemu::core::System::GBA, 180, true,
+       {"conformance", "gba", "swi", "realhw", "mgba"}},
       {"gbc-ppu", "gbc-ppu", gbemu::core::System::GBC, 240, false, {"conformance", "gbc", "ppu"}},
       {"gb-timer-irq", "gb-timer-irq", gbemu::core::System::GB, 240, false, {"conformance", "gb", "timer", "irq"}},
   };
@@ -1870,6 +2157,16 @@ bool parse_env_bool(const char* name, bool default_value) {
     return false;
   }
   return default_value;
+}
+
+bool is_gba_swi_hle_conformance_pack(const ConformanceCase& test_case) {
+  return test_case.system == gbemu::core::System::GBA &&
+         (test_case.pack == "gba-swi-bios" || test_case.pack == "gba-swi-compat");
+}
+
+bool should_enable_gba_swi_hle_for_conformance(const ConformanceCase& test_case,
+                                                bool force_real_bios_swi) {
+  return is_gba_swi_hle_conformance_pack(test_case) && !force_real_bios_swi;
 }
 
 std::vector<std::uint8_t> build_conformance_boot_rom(
@@ -2168,6 +2465,54 @@ void test_conformance_pack_selection_and_filters() {
   std::vector<ConformanceCase> cases = default_conformance_cases();
   expect(!cases.empty(), "Conformance case list should not be empty");
 
+  bool gba_cases_require_mgba = true;
+  bool saw_gba_case = false;
+  bool swi_bios_has_bios_token = false;
+  bool swi_realbios_has_token = false;
+  for (const ConformanceCase& test_case : cases) {
+    bool is_gba_case = test_case.system == gbemu::core::System::GBA;
+    if (!is_gba_case) {
+      continue;
+    }
+    saw_gba_case = true;
+    if (std::find(test_case.tokens.begin(), test_case.tokens.end(), "mgba") ==
+        test_case.tokens.end()) {
+      gba_cases_require_mgba = false;
+    }
+    if (test_case.pack == "gba-swi-bios" &&
+        std::find(test_case.tokens.begin(), test_case.tokens.end(), "bios") !=
+            test_case.tokens.end()) {
+      swi_bios_has_bios_token = true;
+    }
+    if (test_case.pack == "gba-swi-realbios" &&
+        std::find(test_case.tokens.begin(), test_case.tokens.end(), "realhw") !=
+            test_case.tokens.end()) {
+      swi_realbios_has_token = true;
+    }
+  }
+  expect(saw_gba_case, "Conformance list should include GBA-focused cases");
+  expect(gba_cases_require_mgba,
+         "GBA conformance cases should target verdict-capable mgba-tagged ROM paths");
+  expect(swi_bios_has_bios_token,
+         "GBA SWI BIOS case should include a dedicated bios token to avoid overlap with compat pack");
+  expect(swi_realbios_has_token,
+         "GBA SWI real-BIOS case should include a dedicated realbios token");
+
+  bool swi_hle_policy_ok = true;
+  for (const ConformanceCase& test_case : cases) {
+    bool is_swi = is_gba_swi_hle_conformance_pack(test_case);
+    bool expect_default_hle = is_swi;
+    bool expect_forced_real = false;
+    bool actual_default_hle = should_enable_gba_swi_hle_for_conformance(test_case, false);
+    bool actual_forced_real = should_enable_gba_swi_hle_for_conformance(test_case, true);
+    if (actual_default_hle != expect_default_hle || actual_forced_real != expect_forced_real) {
+      swi_hle_policy_ok = false;
+      break;
+    }
+  }
+  expect(swi_hle_policy_ok,
+         "SWI conformance HLE policy should default-on for HLE SWI packs and disable when real BIOS mode is forced");
+
   std::vector<std::string> defaults = parse_selected_conformance_packs(nullptr);
   expect(defaults.size() == 1 && defaults[0] == "smoke",
          "Conformance pack selection should default to smoke");
@@ -2303,9 +2648,14 @@ void run_conformance_harness() {
   std::unordered_map<std::string, ConformancePackStats> pack_stats;
   bool debug_trace = parse_env_bool("GBEMU_CONFORMANCE_DEBUG_TRACE", false);
   bool auto_real_boot_mooneye = parse_env_bool("GBEMU_CONFORMANCE_MOONEYE_REAL_BOOT", true);
+  bool force_real_bios_swi = parse_env_bool("GBEMU_CONFORMANCE_GBA_SWI_FORCE_REAL_BIOS", false);
   int real_boot_min_frames = parse_env_int("GBEMU_CONFORMANCE_REAL_BOOT_MIN_FRAMES").value_or(1200);
   if (real_boot_min_frames <= 0) {
     real_boot_min_frames = 1200;
+  }
+  if (force_real_bios_swi) {
+    std::cout << "Conformance note: forcing real BIOS SWI execution for GBA SWI packs "
+                 "(GBEMU_CONFORMANCE_GBA_SWI_FORCE_REAL_BIOS=1)\n";
   }
 
   for (const ConformanceCase& test_case : cases) {
@@ -2363,6 +2713,11 @@ void run_conformance_harness() {
       }
       if (test_case.system == gbemu::core::System::GBA && test_case.gba_fastboot) {
         core.set_gba_fastboot(true);
+      }
+      if (should_enable_gba_swi_hle_for_conformance(test_case, force_real_bios_swi)) {
+        // Keep SWI conformance deterministic even when the local BIOS image is missing
+        // or not suitable for software-interrupt regression execution.
+        core.set_gba_hle_swi(true);
       }
       std::string load_error;
       if (!core.load_rom(data, boot_rom, &load_error)) {
@@ -2661,6 +3016,12 @@ int main() {
   test_gba_prefetch_pipeline_refill_on_branch_and_mode_switch();
   test_gba_prefetch_stream_break_on_gamepak_data_access();
   test_gba_waitcnt_write_flushes_prefetch_stream();
+  test_gba_prefetch_stream_break_on_dma_activity();
+  test_gba_prefetch_stream_break_on_irq_service_event();
+  test_gba_waitcnt_ws1_ws2_region_timing();
+  test_gba_data_access_width_and_sram_wait_timing();
+  test_gba_gamepak_data_burst_sequential_wait_timing();
+  test_gba_gamepak_data_stream_break_on_event_invalidation();
   test_gba_mgba_debug_output_capture();
   test_gba_hle_swi_math_and_affine();
   test_gba_hle_swi_wait_and_memcpy_paths();
@@ -2670,6 +3031,7 @@ int main() {
   test_gba_dma_repeat_irq_and_start_modes();
   test_gba_irq_ack_priority_and_lr_entry();
   test_gba_irq_register_masking();
+  test_gba_irq_ime_enable_gates_pending_service();
   test_gba_irq_thumb_origin_lr_pipeline();
   test_gba_ppu_mode5_bitmap_pages();
   test_gba_ppu_window_effect_mask();

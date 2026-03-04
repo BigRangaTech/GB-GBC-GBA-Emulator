@@ -1,0 +1,4 @@
+type,name,pack,executed,passed,failed,unknown,load_errors,cpu_faults
+case,blargg-smoke-instr-timing,smoke,1,1,0,0,0,0
+case,mooneye-smoke,smoke,5,5,0,0,0,0
+pack,smoke,smoke,6,6,0,0,0,0

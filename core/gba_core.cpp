@@ -141,6 +141,22 @@ bool bios_has_real_code(const std::vector<std::uint8_t>& bios) {
   return false;
 }
 
+std::uint32_t normalize_swi_immediate(bool thumb, std::uint32_t op) {
+  if (thumb) {
+    return op & 0xFFu;
+  }
+  std::uint32_t imm = op & 0x00FFFFFFu;
+  // Real BIOS SWI dispatch on ARM commonly uses the high byte form
+  // (`swi 0xXX0000`) while some homebrew/HLE paths use low-byte form.
+  if ((imm & 0xFFFFu) == 0u) {
+    std::uint32_t high = (imm >> 16) & 0xFFu;
+    if (high != 0u) {
+      return high;
+    }
+  }
+  return imm;
+}
+
 std::uint16_t rad_to_bios_angle(double radians) {
   double scaled = std::lround(radians * (32768.0 / kPi));
   std::int64_t value = static_cast<std::int64_t>(scaled);
@@ -1962,6 +1978,7 @@ void GbaCore::service_interrupts() {
   cpu_.set_thumb(false);
   cpu_.set_pc(0x00000018u);
   cpu_.set_irq_disable(true);
+  bus_.invalidate_prefetch_stream();
   halted_ = false;
   swi_wait_active_ = false;
   swi_wait_mask_ = 0;
@@ -2097,12 +2114,12 @@ bool GbaCore::handle_swi_hle(std::uint32_t pc_before,
     if ((op_before & 0xFF00u) != 0xDF00u) {
       return false;
     }
-    imm = op_before & 0xFFu;
+    imm = normalize_swi_immediate(true, op_before);
   } else {
     if ((op_before & 0x0F000000u) != 0x0F000000u) {
       return false;
     }
-    imm = op_before & 0x00FFFFFFu;
+    imm = normalize_swi_immediate(false, op_before);
   }
 
   switch (imm) {
@@ -2588,6 +2605,8 @@ void GbaCore::run_dma(int timing) {
       continue;
     }
     dma_[ch].active = true;
+    // DMA is an external bus master; invalidate CPU fetch-stream/prefetch state.
+    bus_.invalidate_prefetch_stream();
     bool word = (ctrl & 0x0400) != 0;
     if (start_timing == 3 && (ch == 1 || ch == 2)) {
       // FIFO sound DMA: fixed 32-bit units.

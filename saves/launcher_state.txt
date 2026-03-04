@@ -1,3 +1,5 @@
+R|Test-Games/Conformance/_Generated/gen_swi_compat.gba
+R|Test-Games/Conformance/_Generated/gen_swi_bios.gba
 R|Test-Games/GBA/Aladdin (USA) (En,Fr,De,Es).gba
 R|Test-Games/GBA/sips.gba
 R|/tmp/sips_assert_bypass.gba

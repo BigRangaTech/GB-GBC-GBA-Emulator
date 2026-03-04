@@ -65,6 +65,7 @@ class GbaBus {
   SaveType save_type() const { return save_type_; }
   void begin_cpu_step();
   int finish_cpu_step(int base_cycles);
+  void invalidate_prefetch_stream() const;
 
   const std::vector<std::uint8_t>& rom() const { return rom_; }
   const std::vector<std::uint8_t>& bios() const { return bios_; }
@@ -176,6 +177,8 @@ class GbaBus {
   mutable bool fetch_stream_active_ = false;
   mutable std::uint32_t fetch_expected_addr_ = 0;
   mutable int prefetch_halfwords_ = 0;
+  mutable bool data_stream_active_ = false;
+  mutable std::uint32_t data_expected_addr_ = 0;
 };
 
 } // namespace gbemu::core

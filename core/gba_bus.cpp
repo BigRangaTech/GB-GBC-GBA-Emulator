@@ -188,12 +188,16 @@ bool GbaBus::load(const std::vector<std::uint8_t>& rom,
   fetch_stream_active_ = false;
   fetch_expected_addr_ = 0;
   prefetch_halfwords_ = 0;
+  data_stream_active_ = false;
+  data_expected_addr_ = 0;
   return true;
 }
 
 void GbaBus::begin_cpu_step() {
   timing_active_ = true;
   pending_timing_cycles_ = 0;
+  data_stream_active_ = false;
+  data_expected_addr_ = 0;
   if (!prefetch_enabled()) {
     prefetch_halfwords_ = 0;
   }
@@ -207,6 +211,14 @@ int GbaBus::finish_cpu_step(int base_cycles) {
   pending_timing_cycles_ = 0;
   timing_active_ = false;
   return extra;
+}
+
+void GbaBus::invalidate_prefetch_stream() const {
+  fetch_stream_active_ = false;
+  fetch_expected_addr_ = 0;
+  prefetch_halfwords_ = 0;
+  data_stream_active_ = false;
+  data_expected_addr_ = 0;
 }
 
 bool GbaBus::is_gamepak_address(std::uint32_t address) const {
@@ -301,10 +313,18 @@ void GbaBus::account_data_access_timing(std::uint32_t address, int bytes) const 
     // Any CPU data access on the Game Pak bus breaks the instruction-fetch stream
     // and invalidates queued prefetch data.
     fetch_stream_active_ = false;
+    fetch_expected_addr_ = 0;
     prefetch_halfwords_ = 0;
-    pending_timing_cycles_ += gamepak_wait_cycles(address, bytes, false);
+    std::uint32_t aligned_addr = address & ~1u;
+    int halfwords = std::max(1, (bytes + 1) / 2);
+    bool sequential_first = data_stream_active_ && (aligned_addr == data_expected_addr_);
+    pending_timing_cycles_ += gamepak_wait_cycles(aligned_addr, bytes, sequential_first);
+    data_stream_active_ = true;
+    data_expected_addr_ = aligned_addr + static_cast<std::uint32_t>(halfwords * 2);
     return;
   }
+  data_stream_active_ = false;
+  data_expected_addr_ = 0;
   if (address >= kSramBase && address < kSramBase + kSramSize) {
     pending_timing_cycles_ += sram_wait_cycles() * std::max(1, bytes);
   }
@@ -314,9 +334,10 @@ void GbaBus::account_fetch_timing(std::uint32_t address, int bytes) const {
   if (!timing_active_ || bytes <= 0) {
     return;
   }
+  data_stream_active_ = false;
+  data_expected_addr_ = 0;
   if (!is_gamepak_address(address)) {
-    fetch_stream_active_ = false;
-    prefetch_halfwords_ = 0;
+    invalidate_prefetch_stream();
     return;
   }
 
@@ -1035,8 +1056,7 @@ void GbaBus::write8_internal(std::uint32_t address,
       write_io16_raw(io_halfword, cur);
     }
     if (address == kRegWaitcnt || address == (kRegWaitcnt + 1)) {
-      fetch_stream_active_ = false;
-      prefetch_halfwords_ = 0;
+      invalidate_prefetch_stream();
     }
     return;
   }
@@ -1553,6 +1573,8 @@ bool GbaBus::deserialize(const std::vector<std::uint8_t>& data,
   fetch_stream_active_ = false;
   fetch_expected_addr_ = 0;
   prefetch_halfwords_ = 0;
+  data_stream_active_ = false;
+  data_expected_addr_ = 0;
 
   if (save_type_ == SaveType::Eeprom512B || save_type_ == SaveType::Eeprom8K) {
     if (save_data_.size() == 512u) {

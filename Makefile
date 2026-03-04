@@ -1,4 +1,4 @@
-.PHONY: build test conformance-smoke conformance-all
+.PHONY: build test conformance-smoke conformance-gba conformance-gba-tighten conformance-gba-swi-ab conformance-all
 
 BUILD_DIR ?= build
 ROM_ROOT ?= Test-Games
@@ -15,6 +15,16 @@ test:
 conformance-smoke:
 	GBEMU_CONFORMANCE_PACKS="$(PACKS)" \
 	./tests/run_seed_smoke_report.sh "$(ROM_ROOT)" "$(REPORT_PATH)"
+
+conformance-gba:
+	./tests/run_seed_gba_report.sh "$(ROM_ROOT)" tests/conformance_gba_report.csv
+
+conformance-gba-tighten:
+	GBEMU_CONFORMANCE_TIGHTEN_BASELINE=1 \
+	./tests/run_seed_gba_report.sh "$(ROM_ROOT)" tests/conformance_gba_report.csv
+
+conformance-gba-swi-ab:
+	./tests/run_seed_gba_swi_ab_report.sh "$(ROM_ROOT)" tests
 
 conformance-all:
 	$(MAKE) conformance-smoke PACKS=all REPORT_PATH=tests/conformance_all_report.csv
